@@ -1,0 +1,83 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          String   // "admin" | "producto" | "tecnico" | "operador"
+  canAddProducts Boolean @default(false)
+  isTechnician  Boolean  @default(false)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Technician {
+  id        String     @id @default(cuid())
+  name      String
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  movements Movement[]
+}
+
+model Product {
+  id                String   @id @default(cuid())
+  name              String
+  sku               String?  @unique
+  barcode           String?
+  description       String?
+  lowStockThreshold Int?     // Avisar cuando stock total <= este valor (null = no avisar)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  stock             Stock[]
+  movements         Movement[]
+}
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  name      String
+  location  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  stock     Stock[]
+  movements Movement[]
+}
+
+model Stock {
+  id          String   @id @default(cuid())
+  productId   String
+  warehouseId String
+  quantity    Int      @default(0)
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([productId, warehouseId])
+}
+
+model Movement {
+  id            String     @id @default(cuid())
+  productId     String
+  warehouseId   String
+  type          String     // "entrada" | "salida" | "ajuste"
+  quantity      Int
+  reason        String?
+  notes         String?
+  technicianId  String?    // Técnico responsable (obligatorio en salidas)
+  createdAt     DateTime   @default(now())
+  product       Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  technician    Technician? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+}

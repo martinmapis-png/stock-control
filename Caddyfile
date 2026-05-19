@@ -1,0 +1,7 @@
+# Proxy inverso: puerto 80 -> app en 3000
+# Dominio: fe-netstock.uno (y por IP)
+# Ejecutar Caddy como administrador para usar puerto 80 en Windows.
+
+fe-netstock.uno, 192.168.1.13, localhost {
+    reverse_proxy 127.0.0.1:3000
+}

@@ -1,0 +1,20 @@
+# Ejemplo para nginx (Linux). Copiar a /etc/nginx/sites-available/ o incluir en nginx.conf
+# sudo ln -s /etc/nginx/sites-available/fe-netstock /etc/nginx/sites-enabled/
+# sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 80;
+    server_name fe-netstock.uno 192.168.1.13 localhost;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
