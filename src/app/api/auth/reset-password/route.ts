@@ -9,12 +9,10 @@ import bcrypt from "bcryptjs";
  */
 export async function POST() {
   try {
-    const adminHash = await bcrypt.hash("admin123", 10);
-    const stockHash = await bcrypt.hash("admin3232", 10);
+    const adminHash = await bcrypt.hash("admin", 10);
 
     for (const { email, passwordHash, name, role } of [
-      { email: "admin@stockcontrol.local", passwordHash: adminHash, name: "Administrador", role: "admin" },
-      { email: "stock@control", passwordHash: stockHash, name: "Stock Control", role: "admin" },
+      { email: "admin", passwordHash: adminHash, name: "Administrador", role: "admin" },
     ]) {
       const existing = await prisma.user.findUnique({ where: { email } });
       if (existing) {
@@ -38,7 +36,7 @@ export async function POST() {
 
     return NextResponse.json({
       success: true,
-      message: "Contraseñas reseteadas. Usa: stock@control / admin3232  o  admin@stockcontrol.local / admin123",
+      message: "Contraseña reseteada. Usuario: admin / Contraseña: admin",
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Error desconocido";

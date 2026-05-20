@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export function LoginForm() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -20,7 +20,7 @@ export function LoginForm() {
       const res = await fetch("/api/auth/reset-password", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setResetMsg(data.message || "Contraseñas reseteadas. Usa: stock@control / admin3232");
+        setResetMsg(data.message || "Contraseña reseteada. Usuario: admin / Contraseña: admin");
       } else {
         setError(data.error || `Error al resetear (${res.status})`);
       }
@@ -34,7 +34,7 @@ export function LoginForm() {
     setError(null);
     setLoading(true);
     try {
-      await login(email, password);
+      await login(username, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al iniciar sesión");
     } finally {
@@ -49,12 +49,13 @@ export function LoginForm() {
         <p className="text-slate-400 text-center mb-6">Inicia sesión para continuar</p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Usuario</label>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="tu@email.com"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="admin"
+              autoComplete="username"
               className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
               required
             />
@@ -100,7 +101,7 @@ export function LoginForm() {
             className="w-full flex items-center justify-center gap-2 py-2 text-sm text-slate-400 hover:text-slate-300"
           >
             <KeyRound className="w-4 h-4" />
-            Resetear contraseñas (stock@control y admin)
+            Resetear contraseña del admin
           </button>
         </form>
       </div>

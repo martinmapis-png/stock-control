@@ -5,17 +5,18 @@ import bcrypt from "bcryptjs";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { email, password } = body;
+    const username = (body.username ?? body.email ?? "").trim().toLowerCase();
+    const { password } = body;
 
-    if (!email?.trim() || !password) {
+    if (!username || !password) {
       return NextResponse.json(
-        { error: "Email y contraseña son requeridos" },
+        { error: "Usuario y contraseña son requeridos" },
         { status: 400 }
       );
     }
 
     const user = await prisma.user.findUnique({
-      where: { email: email.trim().toLowerCase() },
+      where: { email: username },
     });
 
     if (!user || !user.active) {
@@ -26,18 +27,7 @@ export async function POST(request: NextRequest) {
     let valid = false;
 
     try {
-      // Si el hash no tiene formato bcrypt válido, regenerarlo (recuperación)
-      const hashValid = user.passwordHash?.startsWith("$2a$") || user.passwordHash?.startsWith("$2b$");
-      if (!hashValid && user.email === "admin@stockcontrol.local" && passwordStr === "admin123") {
-        const newHash = await bcrypt.hash("admin123", 10);
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { passwordHash: newHash },
-        });
-        valid = true;
-      } else {
-        valid = await bcrypt.compare(passwordStr, user.passwordHash);
-      }
+      valid = await bcrypt.compare(passwordStr, user.passwordHash);
     } catch (e) {
       console.error("Error en bcrypt:", e);
       return NextResponse.json(

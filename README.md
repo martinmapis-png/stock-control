@@ -96,7 +96,7 @@ npm run db:seed
 ### 5. Acceso
 
 - URL: la que asigne Vercel (`*.vercel.app`).
-- Login por defecto (tras seed): `admin@stockcontrol.local` / `admin123`
+- Login por defecto (tras seed): `admin` / `admin`
 - El escáner con cámara requiere **HTTPS** (Vercel lo incluye).
 
 ### Desarrollo local
