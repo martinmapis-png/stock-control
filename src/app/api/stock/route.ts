@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import {
+  assertTechnicianStockForEntrada,
+  InsufficientTechnicianStockError,
+} from "@/lib/technician-stock";
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,6 +34,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const needsTechnician =
+      (type === "salida" || type === "entrada") && Boolean(technicianId);
+
     const product = await prisma.product.findUnique({ where: { id: productId } });
     const warehouse = await prisma.warehouse.findUnique({ where: { id: warehouseId } });
 
@@ -37,7 +44,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Producto o depósito no encontrado" }, { status: 404 });
     }
 
-    if (technicianId && type === "salida") {
+    if (needsTechnician) {
       const technician = await prisma.technician.findFirst({
         where: { id: technicianId, active: true },
       });
@@ -66,12 +73,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await prisma.$transaction([
-      prisma.stock.update({
+    const movementTechnicianId =
+      (type === "salida" || type === "entrada") && technicianId ? technicianId : null;
+
+    await prisma.$transaction(async (tx) => {
+      if (type === "entrada" && movementTechnicianId) {
+        const pending = new Map<string, number>();
+        await assertTechnicianStockForEntrada(
+          tx,
+          movementTechnicianId,
+          productId,
+          qty,
+          product.name,
+          pending
+        );
+      }
+
+      await tx.stock.update({
         where: { id: stock.id },
         data: { quantity: newQuantity },
-      }),
-      prisma.movement.create({
+      });
+      await tx.movement.create({
         data: {
           productId,
           warehouseId,
@@ -79,10 +101,10 @@ export async function POST(request: NextRequest) {
           quantity: qty,
           reason: reason?.trim() || null,
           notes: notes?.trim() || null,
-          technicianId: type === "salida" ? technicianId : null,
+          technicianId: movementTechnicianId,
         },
-      }),
-    ]);
+      });
+    });
 
     const updatedStock = await prisma.stock.findUnique({
       where: { id: stock.id },
@@ -91,6 +113,14 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(updatedStock);
   } catch (error) {
+    if (error instanceof InsufficientTechnicianStockError) {
+      return NextResponse.json(
+        {
+          error: `El técnico no tiene suficiente stock de «${error.productName}». En su poder: ${error.available}`,
+        },
+        { status: 400 }
+      );
+    }
     console.error("Error updating stock:", error);
     return NextResponse.json({ error: "Error al actualizar stock" }, { status: 500 });
   }

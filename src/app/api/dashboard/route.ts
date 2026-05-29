@@ -3,9 +3,12 @@ import { prisma } from "@/lib/db";
 
 export async function GET() {
   try {
-    const [salidas, allMovements] = await Promise.all([
+    const [withTechnician, allMovements] = await Promise.all([
       prisma.movement.findMany({
-        where: { type: "salida", technicianId: { not: null } },
+        where: {
+          technicianId: { not: null },
+          type: { in: ["salida", "entrada"] },
+        },
         include: { technician: true },
       }),
       prisma.movement.findMany({ select: { type: true, quantity: true } }),
@@ -21,27 +24,37 @@ export async function GET() {
       }
     });
 
-    const byTechnician = salidas.reduce(
+    const byTechnician = withTechnician.reduce(
       (acc, m) => {
         if (!m.technician) return acc;
         const id = m.technician.id;
         if (!acc[id]) {
-          acc[id] = { name: m.technician.name, total: 0, count: 0 };
+          acc[id] = { name: m.technician.name, enPoder: 0, retiros: 0, devoluciones: 0 };
         }
-        acc[id].total += m.quantity;
-        acc[id].count += 1;
+        if (m.type === "salida") {
+          acc[id].enPoder += m.quantity;
+          acc[id].retiros += 1;
+        } else if (m.type === "entrada") {
+          acc[id].enPoder -= m.quantity;
+          acc[id].devoluciones += 1;
+        }
         return acc;
       },
-      {} as Record<string, { name: string; total: number; count: number }>
+      {} as Record<
+        string,
+        { name: string; enPoder: number; retiros: number; devoluciones: number }
+      >
     );
 
     const retirosPorTecnico = Object.entries(byTechnician)
       .map(([technicianId, v]) => ({
         technicianId,
         name: v.name,
-        total: v.total,
-        count: v.count,
+        total: v.enPoder,
+        count: v.retiros,
+        devoluciones: v.devoluciones,
       }))
+      .filter((t) => t.total > 0 || t.count > 0 || t.devoluciones > 0)
       .sort((a, b) => b.total - a.total);
 
     return NextResponse.json({

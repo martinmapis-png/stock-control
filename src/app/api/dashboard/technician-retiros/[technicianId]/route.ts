@@ -16,13 +16,17 @@ export async function GET(
     }
 
     const movements = await prisma.movement.findMany({
-      where: { type: "salida", technicianId },
+      where: {
+        technicianId,
+        type: { in: ["salida", "entrada"] },
+      },
       include: { product: true, warehouse: true },
       orderBy: { createdAt: "desc" },
     });
 
     const items = movements.map((m) => ({
       id: m.id,
+      type: m.type as "salida" | "entrada",
       productName: m.product.name,
       quantity: m.quantity,
       warehouseName: m.warehouse.name,

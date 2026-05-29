@@ -19,11 +19,18 @@ interface DashboardData {
   productsWithTotal: ProductTotal[];
   lowStock: { product: string; total: number; threshold: number; warehouses: string }[];
   stockByWarehouse: { name: string; total: number }[];
-  retirosPorTecnico: { technicianId: string; name: string; total: number; count: number }[];
+  retirosPorTecnico: {
+    technicianId: string;
+    name: string;
+    total: number;
+    count: number;
+    devoluciones?: number;
+  }[];
 }
 
 interface RetiroDetalle {
   id: string;
+  type: "salida" | "entrada";
   productName: string;
   quantity: number;
   warehouseName: string;
@@ -247,11 +254,17 @@ export function Dashboard() {
             <User className="w-5 h-5 text-blue-400" />
             Retiros por técnico
           </h3>
-          <p className="text-slate-500 text-sm mb-4">Tocá un técnico para ver qué retiró, cuándo y a qué hora.</p>
+          <p className="text-slate-500 text-sm mb-4">
+            Unidades que cada técnico tiene en su poder (retiros menos devoluciones al depósito). Tocá un técnico para ver el detalle.
+          </p>
           {data.retirosPorTecnico.length > 0 ? (
             <ul className="space-y-2">
               {data.retirosPorTecnico.map((t) => {
                 const retirosLabel = t.count === 1 ? "1 retiro" : `${t.count} retiros`;
+                const devLabel =
+                  (t.devoluciones ?? 0) > 0
+                    ? ` · ${t.devoluciones} devolución${t.devoluciones === 1 ? "" : "es"}`
+                    : "";
                 return (
                   <li key={t.technicianId}>
                     <button
@@ -262,8 +275,12 @@ export function Dashboard() {
                       className="w-full flex justify-between items-center gap-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-left hover:bg-blue-500/15 hover:border-blue-400/35 transition-colors cursor-pointer"
                     >
                       <span className="text-white font-medium">{t.name}</span>
-                      <span className="text-blue-400 font-semibold shrink-0">
-                        {t.total} u. ({retirosLabel})
+                      <span className="text-blue-400 font-semibold shrink-0 text-right text-sm">
+                        {t.total} u. en poder
+                        <span className="block text-xs font-normal text-slate-400">
+                          {retirosLabel}
+                          {devLabel}
+                        </span>
                       </span>
                     </button>
                   </li>
@@ -313,10 +330,10 @@ export function Dashboard() {
             <div className="flex items-start justify-between gap-3 p-4 border-b border-slate-700">
               <div>
                 <h2 id="retiros-modal-title" className="text-lg font-semibold text-white">
-                  Retiros — {retirosModal.name}
+                  Movimientos — {retirosModal.name}
                 </h2>
                 <p className="text-sm text-slate-400 mt-1">
-                  Producto, cantidad, depósito, fecha y hora de cada salida.
+                  Salidas al técnico y entradas devueltas al depósito.
                 </p>
               </div>
               <button
@@ -348,9 +365,24 @@ export function Dashboard() {
                         key={item.id}
                         className="rounded-lg border border-slate-700 bg-slate-800/40 p-3 text-sm"
                       >
-                        <p className="font-medium text-white">
+                        <p className="font-medium text-white flex flex-wrap items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              item.type === "salida"
+                                ? "bg-red-500/20 text-red-400"
+                                : "bg-emerald-500/20 text-emerald-400"
+                            }`}
+                          >
+                            {item.type === "salida" ? "Salida" : "Devolución"}
+                          </span>
                           {item.productName}{" "}
-                          <span className="text-blue-400">×{item.quantity}</span>
+                          <span
+                            className={
+                              item.type === "salida" ? "text-blue-400" : "text-emerald-400"
+                            }
+                          >
+                            ×{item.quantity}
+                          </span>
                         </p>
                         <p className="text-slate-400 mt-1">
                           Depósito: <span className="text-slate-300">{item.warehouseName}</span>

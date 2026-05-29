@@ -42,6 +42,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [warehouseId, setWarehouseId] = useState("");
   const [technicianId, setTechnicianId] = useState("");
+  const [techStockByProduct, setTechStockByProduct] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState("1");
   const [type, setType] = useState<"entrada" | "salida" | "ajuste">("entrada");
   const [reason, setReason] = useState("");
@@ -58,6 +59,29 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       .then((data) => setProducts(Array.isArray(data) ? data : []));
     fetch("/api/technicians").then((r) => r.json()).then(setTechnicians);
   }, []);
+
+  useEffect(() => {
+    if (type !== "entrada" || !technicianId) {
+      setTechStockByProduct({});
+      return;
+    }
+    fetch(`/api/technicians/${technicianId}/stock`)
+      .then((r) => r.json())
+      .then((data) => {
+        const map: Record<string, number> = {};
+        for (const item of data.items ?? []) {
+          map[item.productId] = item.quantity;
+        }
+        setTechStockByProduct(map);
+      })
+      .catch(() => setTechStockByProduct({}));
+  }, [type, technicianId]);
+
+  const getTechnicianAvailable = (productId: string, excludeFromLines = 0) => {
+    const base = techStockByProduct[productId] ?? 0;
+    const inList = lines.find((l) => l.productId === productId)?.quantity ?? 0;
+    return base - inList - excludeFromLines;
+  };
 
   useEffect(() => {
     if (warehouses.length === 1) {
@@ -105,6 +129,18 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
     if (type === "salida" && !technicianId) {
       setError("Las salidas requieren técnico responsable antes de armar la lista");
       return;
+    }
+    if (type === "entrada" && technicianId && selectedProduct) {
+      const qCheck = parseInt(quantity, 10);
+      const available = getTechnicianAvailable(selectedProduct.id);
+      if (!isNaN(qCheck) && qCheck > available) {
+        setError(
+          available > 0
+            ? `El técnico solo tiene ${available} unidad${available === 1 ? "" : "es"} de «${selectedProduct.name}» en su stock`
+            : `El técnico no tiene «${selectedProduct.name}» en su stock`
+        );
+        return;
+      }
     }
     const q = parseInt(quantity, 10);
     if (isNaN(q) || q < 1) {
@@ -163,6 +199,19 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       setError("Las salidas requieren seleccionar un técnico responsable");
       return;
     }
+    if (type === "entrada" && technicianId && lines.length > 0) {
+      for (const line of lines) {
+        const available = techStockByProduct[line.productId] ?? 0;
+        if (line.quantity > available) {
+          setError(
+            available > 0
+              ? `«${line.name}»: el técnico solo tiene ${available} en su stock`
+              : `«${line.name}»: el técnico no tiene ese producto en su stock`
+          );
+          return;
+        }
+      }
+    }
 
     const useBatch = lines.length > 0;
 
@@ -177,7 +226,10 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
             warehouseId,
             type,
             reason: reason || undefined,
-            technicianId: type === "salida" ? technicianId || undefined : undefined,
+            technicianId:
+              (type === "salida" || type === "entrada") && technicianId
+                ? technicianId
+                : undefined,
             lines: lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
           }),
         });
@@ -202,6 +254,18 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       setError("Seleccioná un producto o agregá líneas a la lista");
       return;
     }
+    if (type === "entrada" && technicianId) {
+      const available = techStockByProduct[selectedProduct.id] ?? 0;
+      const qtyCheck = parseInt(quantity, 10);
+      if (!isNaN(qtyCheck) && qtyCheck > available) {
+        setError(
+          available > 0
+            ? `El técnico solo tiene ${available} unidad${available === 1 ? "" : "es"} de este producto`
+            : "El técnico no tiene este producto en su stock"
+        );
+        return;
+      }
+    }
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty < 1) {
       setError("La cantidad debe ser al menos 1");
@@ -220,7 +284,10 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           type,
           quantity: qty,
           reason: reason || undefined,
-          technicianId: type === "salida" ? technicianId || undefined : undefined,
+          technicianId:
+            (type === "salida" || type === "entrada") && technicianId
+              ? technicianId
+              : undefined,
         }),
       });
 
@@ -339,6 +406,15 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           {selectedProduct && (
             <p className="text-sm text-emerald-400/90">
               Seleccionado: <span className="font-medium text-white">{selectedProduct.name}</span>
+              {type === "entrada" && technicianId && (
+                <span className="text-slate-400">
+                  {" "}
+                  · En poder del técnico:{" "}
+                  <span className="text-amber-300 font-medium">
+                    {techStockByProduct[selectedProduct.id] ?? 0}
+                  </span>
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -372,10 +448,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
             <label className="block text-sm font-medium text-slate-300 mb-1">Tipo de movimiento</label>
             <select
               value={type}
-              onChange={(e) => {
-                setType(e.target.value as "entrada" | "salida" | "ajuste");
-                if (e.target.value !== "salida") setTechnicianId("");
-              }}
+              onChange={(e) => setType(e.target.value as "entrada" | "salida" | "ajuste")}
               className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
             >
               <option value="entrada">Entrada</option>
@@ -472,24 +545,34 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           </div>
         )}
 
-        {type === "salida" && (
+        {(type === "salida" || type === "entrada") && (
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">
-              Técnico responsable *
+              {type === "salida"
+                ? "Técnico responsable *"
+                : "Devolución desde técnico (opcional)"}
             </label>
             <select
               value={technicianId}
               onChange={(e) => setTechnicianId(e.target.value)}
               className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
-              required
+              required={type === "salida"}
             >
-              <option value="">Selecciona técnico</option>
+              <option value="">
+                {type === "salida" ? "Selecciona técnico" : "Sin técnico (ej. proveedor)"}
+              </option>
               {technicians.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>
               ))}
             </select>
+            {type === "entrada" && technicianId && (
+              <p className="text-slate-500 text-xs mt-1.5">
+                Al registrar la entrada se suma al depósito y se descuenta del stock en poder de ese
+                técnico.
+              </p>
+            )}
             {technicians.length === 0 && (
               <p className="text-amber-400 text-sm mt-1">
                 No hay técnicos. Agrégalos en la pestaña Técnicos.

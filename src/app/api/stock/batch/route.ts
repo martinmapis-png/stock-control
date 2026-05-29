@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import {
+  assertTechnicianStockForEntrada,
+  InsufficientTechnicianStockError,
+} from "@/lib/technician-stock";
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,9 +34,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Depósito no encontrado" }, { status: 404 });
     }
 
-    if (technicianId && type === "salida") {
+    const movementTechnicianId =
+      (type === "salida" || type === "entrada") && technicianId ? technicianId : null;
+
+    if (movementTechnicianId) {
       const technician = await prisma.technician.findFirst({
-        where: { id: technicianId, active: true },
+        where: { id: movementTechnicianId, active: true },
       });
       if (!technician) {
         return NextResponse.json({ error: "Técnico no válido o inactivo" }, { status: 400 });
@@ -67,7 +74,22 @@ export async function POST(request: NextRequest) {
 
     try {
       await prisma.$transaction(async (tx) => {
+        const pendingTechnician = new Map<string, number>();
+
         for (const { productId, quantity: qty } of finalLines) {
+          const p = productMap.get(productId)!;
+
+          if (type === "entrada" && movementTechnicianId) {
+            await assertTechnicianStockForEntrada(
+              tx,
+              movementTechnicianId,
+              productId,
+              qty,
+              p.name,
+              pendingTechnician
+            );
+          }
+
           let stock = await tx.stock.findUnique({
             where: { productId_warehouseId: { productId, warehouseId } },
           });
@@ -79,7 +101,6 @@ export async function POST(request: NextRequest) {
           const quantityChange = type === "salida" ? -qty : qty;
           const newQuantity = stock.quantity + quantityChange;
           if (newQuantity < 0) {
-            const p = productMap.get(productId)!;
             throw new Error(
               JSON.stringify({
                 code: "INSUFFICIENT_STOCK",
@@ -100,12 +121,20 @@ export async function POST(request: NextRequest) {
               quantity: qty,
               reason: reason?.trim() || null,
               notes: notes?.trim() || null,
-              technicianId: type === "salida" ? technicianId : null,
+              technicianId: movementTechnicianId,
             },
           });
         }
       });
     } catch (e) {
+      if (e instanceof InsufficientTechnicianStockError) {
+        return NextResponse.json(
+          {
+            error: `El técnico no tiene suficiente stock de «${e.productName}». En su poder: ${e.available}`,
+          },
+          { status: 400 }
+        );
+      }
       if (e instanceof Error) {
         try {
           const j = JSON.parse(e.message) as {
