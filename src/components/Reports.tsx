@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Download, Filter } from "lucide-react";
+import { FileText, Download, Filter, FileDown } from "lucide-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+
 function formatDate(date: Date) {
   return date.toLocaleDateString("es-AR", {
     day: "2-digit",
@@ -10,6 +13,45 @@ function formatDate(date: Date) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatType(type: string) {
+  if (type === "entrada") return "Entrada";
+  if (type === "salida") return "Salida";
+  if (type === "ajuste") return "Ajuste";
+  return type;
+}
+
+const REPORT_HEADERS = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"] as const;
+
+function movementRows(movements: Movement[]) {
+  return movements.map((m) => [
+    formatDate(new Date(m.createdAt)),
+    m.product.name,
+    m.warehouse.name,
+    formatType(m.type),
+    String(m.quantity),
+    m.technician?.name || "-",
+    m.reason || "-",
+  ]);
+}
+
+function filterSummary(
+  filters: { productId: string; warehouseId: string; type: string; dateFrom: string; dateTo: string },
+  products: { id: string; name: string }[],
+  warehouses: { id: string; name: string }[]
+) {
+  const parts: string[] = [];
+  if (filters.productId) {
+    parts.push(`Producto: ${products.find((p) => p.id === filters.productId)?.name ?? filters.productId}`);
+  }
+  if (filters.warehouseId) {
+    parts.push(`Depósito: ${warehouses.find((w) => w.id === filters.warehouseId)?.name ?? filters.warehouseId}`);
+  }
+  if (filters.type) parts.push(`Tipo: ${formatType(filters.type)}`);
+  if (filters.dateFrom) parts.push(`Desde: ${filters.dateFrom}`);
+  if (filters.dateTo) parts.push(`Hasta: ${filters.dateTo}`);
+  return parts.length ? parts.join(" · ") : "Sin filtros (todos los movimientos)";
 }
 
 interface Movement {
@@ -63,17 +105,8 @@ export function Reports() {
 
   const exportCSV = () => {
     if (!report?.movements.length) return;
-    const headers = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"];
-    const rows = report.movements.map((m) => [
-      formatDate(new Date(m.createdAt)),
-      m.product.name,
-      m.warehouse.name,
-      m.type,
-      m.quantity,
-      m.technician?.name || "",
-      m.reason || "",
-    ]);
-    const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
+    const rows = movementRows(report.movements);
+    const csv = [REPORT_HEADERS.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -83,6 +116,55 @@ export function Reports() {
     URL.revokeObjectURL(url);
   };
 
+  const exportPDF = () => {
+    if (!report?.movements.length) return;
+
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFontSize(16);
+    doc.text("Reporte de movimientos de stock", 14, 16);
+
+    doc.setFontSize(10);
+    doc.setTextColor(80, 80, 80);
+    doc.text(`Generado: ${formatDate(new Date())}`, 14, 23);
+    doc.text(filterSummary(filters, products, warehouses), 14, 29);
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(11);
+    doc.text(
+      `Entradas: ${report.summary.totalEntradas}   |   Salidas: ${report.summary.totalSalidas}   |   Movimientos: ${report.summary.totalMovimientos}`,
+      14,
+      36
+    );
+
+    autoTable(doc, {
+      startY: 42,
+      head: [REPORT_HEADERS as unknown as string[]],
+      body: movementRows(report.movements),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [5, 150, 105], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      margin: { left: 14, right: 14 },
+      tableWidth: pageWidth - 28,
+    });
+
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(120, 120, 120);
+      doc.text(
+        `StockControl · Página ${i} de ${pageCount}`,
+        pageWidth / 2,
+        doc.internal.pageSize.getHeight() - 8,
+        { align: "center" }
+      );
+    }
+
+    doc.save(`reporte-stock-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   return (
     <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50">
       <div className="flex items-center justify-between mb-6">
@@ -90,14 +172,24 @@ export function Reports() {
           <FileText className="w-5 h-5" />
           Reportes
         </h2>
-        <button
-          onClick={exportCSV}
-          disabled={!report?.movements.length}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium"
-        >
-          <Download className="w-4 h-4" />
-          Exportar CSV
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={exportCSV}
+            disabled={!report?.movements.length}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium"
+          >
+            <Download className="w-4 h-4" />
+            Exportar CSV
+          </button>
+          <button
+            onClick={exportPDF}
+            disabled={!report?.movements.length}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-medium"
+          >
+            <FileDown className="w-4 h-4" />
+            Exportar PDF
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
