@@ -38,7 +38,10 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
-  const [productListFilter, setProductListFilter] = useState("");
+  const [productQuery, setProductQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  const productSearchRef = useRef<HTMLDivElement>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [warehouseId, setWarehouseId] = useState("");
   const [technicianId, setTechnicianId] = useState("");
@@ -93,23 +96,64 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
     }
   }, [warehouses]);
 
-  const filteredProducts = useMemo(() => {
-    const q = productListFilter.trim().toLowerCase();
-    if (!q) return products;
-    return products.filter((p) => {
-      const name = p.name.toLowerCase();
-      const sku = (p.sku ?? "").toLowerCase();
-      const barcode = p.barcode ?? "";
-      return name.includes(q) || sku.includes(q) || barcode.includes(q);
-    });
-  }, [products, productListFilter]);
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (productSearchRef.current && !productSearchRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
-  const productsForSelect = useMemo(() => {
-    if (!selectedProduct) return filteredProducts;
-    const inFiltered = filteredProducts.some((p) => p.id === selectedProduct.id);
-    if (inFiltered) return filteredProducts;
-    return [selectedProduct, ...filteredProducts];
-  }, [filteredProducts, selectedProduct]);
+  const productSuggestions = useMemo(() => {
+    const q = productQuery.trim().toLowerCase();
+    if (!q) return [];
+    return products
+      .filter((p) => {
+        const name = p.name.toLowerCase();
+        const sku = (p.sku ?? "").toLowerCase();
+        const barcode = p.barcode ?? "";
+        return name.includes(q) || sku.includes(q) || barcode.includes(q);
+      })
+      .slice(0, 15);
+  }, [products, productQuery]);
+
+  const selectProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setProductQuery(product.name);
+    setShowSuggestions(false);
+    setHighlightIndex(0);
+    setError(null);
+  };
+
+  const handleProductQueryChange = (value: string) => {
+    setProductQuery(value);
+    setShowSuggestions(true);
+    setHighlightIndex(0);
+    if (selectedProduct && value.trim() !== selectedProduct.name) {
+      setSelectedProduct(null);
+    }
+  };
+
+  const handleProductSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showSuggestions || productSuggestions.length === 0) {
+      if (e.key === "Escape") setShowSuggestions(false);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.min(i + 1, productSuggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      selectProduct(productSuggestions[highlightIndex]);
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
+  };
 
   const bumpQuantity = (delta: number) => {
     const cur = parseInt(quantity, 10);
@@ -159,7 +203,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
     });
     setSelectedProduct(null);
     setQuantity("1");
-    setProductListFilter("");
+    setProductQuery("");
     barcodeInputRef.current?.focus();
   };
 
@@ -181,8 +225,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       const res = await fetch(`/api/products?barcode=${encodeURIComponent(code)}`);
       const product = await res.json();
       if (product?.id) {
-        setSelectedProduct(product);
-        setProductListFilter("");
+        selectProduct(product);
       }
     } catch {
       setError("Producto no encontrado. Créalo primero.");
@@ -350,8 +393,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
                   const res = await fetch(`/api/products?barcode=${encodeURIComponent(code)}`);
                   const product = await res.json();
                   if (product?.id) {
-                    setSelectedProduct(product);
-                    setProductListFilter("");
+                    selectProduct(product);
                   } else {
                     setError("Producto no encontrado. Créalo en la pestaña Productos.");
                   }
@@ -361,46 +403,74 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
               className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
             />
           </div>
-          <div>
-            <span className="block text-xs font-medium text-slate-400 mb-1">Buscar en la lista</span>
+          <div ref={productSearchRef}>
+            <span className="block text-xs font-medium text-slate-400 mb-1">Buscar producto</span>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none z-10" />
               <input
                 type="text"
-                value={productListFilter}
-                onChange={(e) => setProductListFilter(e.target.value)}
-                placeholder="Nombre, SKU o código de barras..."
+                value={productQuery}
+                onChange={(e) => handleProductQueryChange(e.target.value)}
+                onFocus={() => productQuery.trim() && setShowSuggestions(true)}
+                onKeyDown={handleProductSearchKeyDown}
+                placeholder="Escribí nombre, SKU o código de barras..."
+                autoComplete="off"
+                role="combobox"
+                aria-expanded={showSuggestions && productSuggestions.length > 0}
+                aria-autocomplete="list"
                 className="w-full pl-10 pr-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white placeholder-slate-500 focus:ring-2 focus:ring-emerald-500"
               />
+              {showSuggestions && productQuery.trim() && (
+                <ul
+                  role="listbox"
+                  className="absolute z-20 w-full mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-600 bg-slate-900 shadow-xl"
+                >
+                  {productSuggestions.length === 0 ? (
+                    <li className="px-4 py-3 text-sm text-slate-500">No hay coincidencias</li>
+                  ) : (
+                    productSuggestions.map((p, index) => (
+                      <li key={p.id} role="option" aria-selected={index === highlightIndex}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectProduct(p)}
+                          onMouseEnter={() => setHighlightIndex(index)}
+                          className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                            index === highlightIndex
+                              ? "bg-emerald-600/30 text-white"
+                              : "text-slate-200 hover:bg-slate-800"
+                          } ${selectedProduct?.id === p.id ? "border-l-2 border-emerald-500" : ""}`}
+                        >
+                          <span className="font-medium">{p.name}</span>
+                          {(p.sku || p.barcode) && (
+                            <span className="block text-xs text-slate-400 mt-0.5">
+                              {[p.sku ? `SKU ${p.sku}` : null, p.barcode ? `Cód. ${p.barcode}` : null]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              )}
             </div>
+            {products.length === 0 && (
+              <p className="text-xs text-amber-400/90 mt-1.5">
+                No hay productos — creá algunos en la pestaña Productos
+              </p>
+            )}
           </div>
-          <div className="flex gap-2">
-            <select
-              value={selectedProduct?.id ?? ""}
-              onChange={(e) => {
-                const p = products.find((x) => x.id === e.target.value);
-                setSelectedProduct(p ?? null);
-              }}
-              className="flex-1 px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500 min-w-0"
-            >
-              <option value="">
-                {products.length === 0 ? "No hay productos — creá algunos en Productos" : "Seleccioná un producto…"}
-              </option>
-              {productsForSelect.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.sku ? ` · SKU ${p.sku}` : ""}
-                  {p.barcode ? ` · ${p.barcode}` : ""}
-                </option>
-              ))}
-            </select>
+          <div className="flex justify-end">
             <button
               type="button"
               onClick={() => setShowScanner(true)}
-              className="shrink-0 p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm"
               title="Escanear con cámara"
             >
-              <Camera className="w-5 h-5" />
+              <Camera className="w-4 h-4" />
+              Escanear con cámara
             </button>
           </div>
           {selectedProduct && (
