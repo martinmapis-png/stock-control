@@ -22,8 +22,12 @@ function formatType(type: string) {
   return type;
 }
 
+function currentMonthValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 const REPORT_HEADERS = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"] as const;
-const MONTHLY_HEADERS = ["Mes", "Stock inicial", "Entradas", "Salidas", "Stock final"] as const;
 
 function movementRows(movements: Movement[]) {
   return movements.map((m) => [
@@ -37,18 +41,15 @@ function movementRows(movements: Movement[]) {
   ]);
 }
 
-function monthlyRows(monthlyStock: MonthlyStock[]) {
-  return monthlyStock.map((m) => [
-    m.label,
-    String(m.stockInicial),
-    String(m.entradas),
-    String(m.salidas),
-    String(m.stockFinal),
-  ]);
-}
-
 function filterSummary(
-  filters: { productId: string; warehouseId: string; type: string; dateFrom: string; dateTo: string },
+  filters: {
+    productId: string;
+    warehouseId: string;
+    type: string;
+    month: string;
+    dateFrom: string;
+    dateTo: string;
+  },
   products: { id: string; name: string }[],
   warehouses: { id: string; name: string }[]
 ) {
@@ -60,6 +61,7 @@ function filterSummary(
     parts.push(`Depósito: ${warehouses.find((w) => w.id === filters.warehouseId)?.name ?? filters.warehouseId}`);
   }
   if (filters.type) parts.push(`Tipo: ${formatType(filters.type)}`);
+  if (filters.month) parts.push(`Mes: ${filters.month}`);
   if (filters.dateFrom) parts.push(`Desde: ${filters.dateFrom}`);
   if (filters.dateTo) parts.push(`Hasta: ${filters.dateTo}`);
   return parts.length ? parts.join(" · ") : "Sin filtros (todos los movimientos)";
@@ -76,7 +78,7 @@ interface Movement {
   technician?: { id: string; name: string } | null;
 }
 
-interface MonthlyStock {
+interface MonthStock {
   month: string;
   label: string;
   stockInicial: number;
@@ -88,7 +90,7 @@ interface MonthlyStock {
 interface ReportData {
   movements: Movement[];
   summary: { totalEntradas: number; totalSalidas: number; totalMovimientos: number };
-  monthlyStock: MonthlyStock[];
+  monthStock: MonthStock | null;
 }
 
 export function Reports() {
@@ -98,6 +100,7 @@ export function Reports() {
     productId: "",
     warehouseId: "",
     type: "",
+    month: currentMonthValue(),
     dateFrom: "",
     dateTo: "",
   });
@@ -115,6 +118,7 @@ export function Reports() {
     if (filters.productId) params.set("productId", filters.productId);
     if (filters.warehouseId) params.set("warehouseId", filters.warehouseId);
     if (filters.type) params.set("type", filters.type);
+    if (filters.month) params.set("month", filters.month);
     if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
     if (filters.dateTo) params.set("dateTo", filters.dateTo);
 
@@ -124,17 +128,18 @@ export function Reports() {
     setLoading(false);
   };
 
-  const canExport = Boolean(report && (report.movements.length > 0 || report.monthlyStock?.length > 0));
+  const canExport = Boolean(report && (report.movements.length > 0 || report.monthStock));
 
   const exportCSV = () => {
     if (!report || !canExport) return;
 
     const sections: string[] = [];
 
-    if (report.monthlyStock?.length) {
+    if (report.monthStock) {
+      const m = report.monthStock;
       sections.push(
-        MONTHLY_HEADERS.join(","),
-        ...monthlyRows(report.monthlyStock).map((r) => r.map((c) => `"${c}"`).join(",")),
+        "Mes,Stock inicial,Entradas,Salidas,Stock final",
+        `"${m.label}","${m.stockInicial}","${m.entradas}","${m.salidas}","${m.stockFinal}"`,
         ""
       );
     }
@@ -170,45 +175,26 @@ export function Reports() {
 
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(11);
-    doc.text(
-      `Entradas: ${report.summary.totalEntradas}   |   Salidas: ${report.summary.totalSalidas}   |   Movimientos: ${report.summary.totalMovimientos}`,
-      14,
-      36
-    );
+    let nextY = 36;
 
-    let nextY = 42;
-
-    if (report.monthlyStock?.length) {
-      doc.setFontSize(12);
-      doc.text("Stock inicial y final por mes", 14, nextY);
-      nextY += 4;
-
-      autoTable(doc, {
-        startY: nextY,
-        head: [MONTHLY_HEADERS as unknown as string[]],
-        body: monthlyRows(report.monthlyStock),
-        styles: { fontSize: 8, cellPadding: 2 },
-        headStyles: { fillColor: [37, 99, 235], textColor: 255 },
-        alternateRowStyles: { fillColor: [245, 245, 245] },
-        margin: { left: 14, right: 14 },
-        tableWidth: pageWidth - 28,
-        columnStyles: {
-          1: { halign: "right" },
-          2: { halign: "right" },
-          3: { halign: "right" },
-          4: { halign: "right" },
-        },
-      });
-
-      nextY = ((doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? nextY) + 10;
+    if (report.monthStock) {
+      const m = report.monthStock;
+      doc.text(
+        `${m.label} — Stock inicial: ${m.stockInicial}  |  Entradas: ${m.entradas}  |  Salidas: ${m.salidas}  |  Stock final: ${m.stockFinal}`,
+        14,
+        nextY
+      );
+      nextY += 7;
+    } else {
+      doc.text(
+        `Entradas: ${report.summary.totalEntradas}   |   Salidas: ${report.summary.totalSalidas}   |   Movimientos: ${report.summary.totalMovimientos}`,
+        14,
+        nextY
+      );
+      nextY += 7;
     }
 
     if (report.movements.length) {
-      doc.setFontSize(12);
-      doc.setTextColor(0, 0, 0);
-      doc.text("Detalle de movimientos", 14, nextY);
-      nextY += 4;
-
       autoTable(doc, {
         startY: nextY,
         head: [REPORT_HEADERS as unknown as string[]],
@@ -264,7 +250,16 @@ export function Reports() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">Mes</label>
+          <input
+            type="month"
+            value={filters.month}
+            onChange={(e) => setFilters((f) => ({ ...f, month: e.target.value }))}
+            className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">Producto</label>
           <select
@@ -339,52 +334,45 @@ export function Reports() {
 
       {report && (
         <>
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <p className="text-sm text-slate-400">Entradas</p>
-              <p className="text-xl font-bold text-emerald-400">{report.summary.totalEntradas}</p>
+          {report.monthStock ? (
+            <div className="mb-6">
+              <p className="text-sm text-slate-400 mb-3">{report.monthStock.label}</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <p className="text-sm text-slate-400">Stock inicial</p>
+                  <p className="text-xl font-bold text-blue-400">{report.monthStock.stockInicial}</p>
+                </div>
+                <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                  <p className="text-sm text-slate-400">Entradas</p>
+                  <p className="text-xl font-bold text-emerald-400">{report.monthStock.entradas}</p>
+                </div>
+                <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
+                  <p className="text-sm text-slate-400">Salidas</p>
+                  <p className="text-xl font-bold text-red-400">{report.monthStock.salidas}</p>
+                </div>
+                <div className="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                  <p className="text-sm text-slate-400">Stock final</p>
+                  <p className="text-xl font-bold text-white">{report.monthStock.stockFinal}</p>
+                </div>
+              </div>
             </div>
-            <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
-              <p className="text-sm text-slate-400">Salidas</p>
-              <p className="text-xl font-bold text-red-400">{report.summary.totalSalidas}</p>
-            </div>
-            <div className="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-              <p className="text-sm text-slate-400">Total movimientos</p>
-              <p className="text-xl font-bold text-white">{report.summary.totalMovimientos}</p>
-            </div>
-          </div>
-
-          {report.monthlyStock?.length > 0 && (
-            <div className="mb-8">
-              <h3 className="text-lg font-medium text-white mb-3">Stock inicial y final por mes</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-600">
-                      <th className="text-left py-3 px-2 text-slate-400 font-medium">Mes</th>
-                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Stock inicial</th>
-                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Entradas</th>
-                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Salidas</th>
-                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Stock final</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.monthlyStock.map((m) => (
-                      <tr key={m.month} className="border-b border-slate-700/50 hover:bg-slate-800/30">
-                        <td className="py-3 px-2 text-white font-medium">{m.label}</td>
-                        <td className="py-3 px-2 text-right text-slate-300">{m.stockInicial}</td>
-                        <td className="py-3 px-2 text-right text-emerald-400">{m.entradas}</td>
-                        <td className="py-3 px-2 text-right text-red-400">{m.salidas}</td>
-                        <td className="py-3 px-2 text-right text-white font-medium">{m.stockFinal}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          ) : (
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                <p className="text-sm text-slate-400">Entradas</p>
+                <p className="text-xl font-bold text-emerald-400">{report.summary.totalEntradas}</p>
+              </div>
+              <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
+                <p className="text-sm text-slate-400">Salidas</p>
+                <p className="text-xl font-bold text-red-400">{report.summary.totalSalidas}</p>
+              </div>
+              <div className="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                <p className="text-sm text-slate-400">Total movimientos</p>
+                <p className="text-xl font-bold text-white">{report.summary.totalMovimientos}</p>
               </div>
             </div>
           )}
 
-          <h3 className="text-lg font-medium text-white mb-3">Detalle de movimientos</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>

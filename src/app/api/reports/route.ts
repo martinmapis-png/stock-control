@@ -6,6 +6,12 @@ function parseLocalDate(iso: string) {
   return new Date(y, m - 1, d);
 }
 
+function parseMonth(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  if (!y || !m || m < 1 || m > 12) return null;
+  return new Date(y, m - 1, 1);
+}
+
 function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
 }
@@ -23,10 +29,6 @@ function movementDelta(type: string, quantity: number) {
   return type === "salida" ? -quantity : quantity;
 }
 
-function monthKey(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function monthLabel(d: Date) {
   const label = d.toLocaleDateString("es-AR", { month: "long", year: "numeric" });
   return label.charAt(0).toUpperCase() + label.slice(1);
@@ -38,8 +40,19 @@ export async function GET(request: NextRequest) {
     const productId = searchParams.get("productId");
     const warehouseId = searchParams.get("warehouseId");
     const type = searchParams.get("type");
-    const dateFrom = searchParams.get("dateFrom");
-    const dateTo = searchParams.get("dateTo");
+    const month = searchParams.get("month");
+    let dateFrom = searchParams.get("dateFrom");
+    let dateTo = searchParams.get("dateTo");
+
+    const selectedMonth = month ? parseMonth(month) : null;
+
+    if (selectedMonth && !dateFrom && !dateTo) {
+      const y = selectedMonth.getFullYear();
+      const m = String(selectedMonth.getMonth() + 1).padStart(2, "0");
+      const lastDay = endOfMonth(selectedMonth).getDate();
+      dateFrom = `${y}-${m}-01`;
+      dateTo = `${y}-${m}-${String(lastDay).padStart(2, "0")}`;
+    }
 
     const where: Record<string, unknown> = {};
 
@@ -71,15 +84,19 @@ export async function GET(request: NextRequest) {
         },
         orderBy: { createdAt: "desc" },
       }),
-      prisma.stock.findMany({
-        where: stockScope,
-        select: { quantity: true },
-      }),
-      prisma.movement.findMany({
-        where: stockScope,
-        select: { type: true, quantity: true, createdAt: true },
-        orderBy: { createdAt: "asc" },
-      }),
+      selectedMonth
+        ? prisma.stock.findMany({
+            where: stockScope,
+            select: { quantity: true },
+          })
+        : Promise.resolve([] as { quantity: number }[]),
+      selectedMonth
+        ? prisma.movement.findMany({
+            where: stockScope,
+            select: { type: true, quantity: true, createdAt: true },
+            orderBy: { createdAt: "asc" },
+          })
+        : Promise.resolve([] as { type: string; quantity: number; createdAt: Date }[]),
     ]);
 
     const summary = movements.reduce(
@@ -94,38 +111,19 @@ export async function GET(request: NextRequest) {
       { totalEntradas: 0, totalSalidas: 0 }
     );
 
-    const currentStock = stocks.reduce((sum, s) => sum + s.quantity, 0);
-    const now = new Date();
-
-    let rangeStart = startOfMonth(now);
-    let rangeEnd = endOfMonth(now);
-
-    if (dateFrom) {
-      rangeStart = startOfMonth(parseLocalDate(dateFrom));
-    } else if (allMovements.length > 0) {
-      rangeStart = startOfMonth(allMovements[0].createdAt);
-    }
-
-    if (dateTo) {
-      rangeEnd = endOfMonth(parseLocalDate(dateTo));
-    }
-
-    const monthlyStock: {
+    let monthStock: {
       month: string;
       label: string;
       stockInicial: number;
       entradas: number;
       salidas: number;
       stockFinal: number;
-    }[] = [];
+    } | null = null;
 
-    for (
-      let cursor = new Date(rangeStart);
-      cursor <= rangeEnd;
-      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
-    ) {
-      const mStart = startOfMonth(cursor);
-      const mEnd = endOfMonth(cursor);
+    if (selectedMonth) {
+      const currentStock = stocks.reduce((sum, s) => sum + s.quantity, 0);
+      const mStart = startOfMonth(selectedMonth);
+      const mEnd = endOfMonth(selectedMonth);
 
       let afterStart = 0;
       let afterEnd = 0;
@@ -142,14 +140,14 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      monthlyStock.push({
-        month: monthKey(cursor),
-        label: monthLabel(cursor),
+      monthStock = {
+        month: `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`,
+        label: monthLabel(selectedMonth),
         stockInicial: currentStock - afterStart,
         entradas,
         salidas,
         stockFinal: currentStock - afterEnd,
-      });
+      };
     }
 
     return NextResponse.json({
@@ -158,7 +156,7 @@ export async function GET(request: NextRequest) {
         ...summary,
         totalMovimientos: movements.length,
       },
-      monthlyStock,
+      monthStock,
     });
   } catch (error) {
     console.error("Error fetching report:", error);
