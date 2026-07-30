@@ -28,6 +28,7 @@ function currentMonthValue() {
 }
 
 const REPORT_HEADERS = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"] as const;
+const STOCK_HEADERS = ["Producto", "Stock inicial", "Entradas", "Salidas", "Stock final"] as const;
 
 function movementRows(movements: Movement[]) {
   return movements.map((m) => [
@@ -38,6 +39,16 @@ function movementRows(movements: Movement[]) {
     String(m.quantity),
     m.technician?.name || "-",
     m.reason || "-",
+  ]);
+}
+
+function stockRows(items: MonthStockItem[]) {
+  return items.map((i) => [
+    i.productName,
+    String(i.stockInicial),
+    String(i.entradas),
+    String(i.salidas),
+    String(i.stockFinal),
   ]);
 }
 
@@ -78,6 +89,15 @@ interface Movement {
   technician?: { id: string; name: string } | null;
 }
 
+interface MonthStockItem {
+  productId: string;
+  productName: string;
+  stockInicial: number;
+  entradas: number;
+  salidas: number;
+  stockFinal: number;
+}
+
 interface MonthStock {
   month: string;
   label: string;
@@ -85,6 +105,7 @@ interface MonthStock {
   entradas: number;
   salidas: number;
   stockFinal: number;
+  items: MonthStockItem[];
 }
 
 interface ReportData {
@@ -128,18 +149,19 @@ export function Reports() {
     setLoading(false);
   };
 
-  const canExport = Boolean(report && (report.movements.length > 0 || report.monthStock));
+  const canExport = Boolean(
+    report && (report.movements.length > 0 || (report.monthStock?.items.length ?? 0) > 0)
+  );
 
   const exportCSV = () => {
     if (!report || !canExport) return;
 
     const sections: string[] = [];
 
-    if (report.monthStock) {
-      const m = report.monthStock;
+    if (report.monthStock?.items.length) {
       sections.push(
-        "Mes,Stock inicial,Entradas,Salidas,Stock final",
-        `"${m.label}","${m.stockInicial}","${m.entradas}","${m.salidas}","${m.stockFinal}"`,
+        STOCK_HEADERS.join(","),
+        ...stockRows(report.monthStock.items).map((r) => r.map((c) => `"${c}"`).join(",")),
         ""
       );
     }
@@ -184,7 +206,32 @@ export function Reports() {
         14,
         nextY
       );
-      nextY += 7;
+      nextY += 6;
+
+      if (m.items.length) {
+        doc.setFontSize(12);
+        doc.text("Detalle de stock por producto", 14, nextY);
+        nextY += 4;
+
+        autoTable(doc, {
+          startY: nextY,
+          head: [STOCK_HEADERS as unknown as string[]],
+          body: stockRows(m.items),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+          alternateRowStyles: { fillColor: [245, 245, 245] },
+          margin: { left: 14, right: 14 },
+          tableWidth: pageWidth - 28,
+          columnStyles: {
+            1: { halign: "right" },
+            2: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right" },
+          },
+        });
+
+        nextY = ((doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? nextY) + 10;
+      }
     } else {
       doc.text(
         `Entradas: ${report.summary.totalEntradas}   |   Salidas: ${report.summary.totalSalidas}   |   Movimientos: ${report.summary.totalMovimientos}`,
@@ -195,6 +242,11 @@ export function Reports() {
     }
 
     if (report.movements.length) {
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Detalle de movimientos", 14, nextY);
+      nextY += 4;
+
       autoTable(doc, {
         startY: nextY,
         head: [REPORT_HEADERS as unknown as string[]],
@@ -335,9 +387,9 @@ export function Reports() {
       {report && (
         <>
           {report.monthStock ? (
-            <div className="mb-6">
+            <div className="mb-8">
               <p className="text-sm text-slate-400 mb-3">{report.monthStock.label}</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
                   <p className="text-sm text-slate-400">Stock inicial</p>
                   <p className="text-xl font-bold text-blue-400">{report.monthStock.stockInicial}</p>
@@ -354,6 +406,35 @@ export function Reports() {
                   <p className="text-sm text-slate-400">Stock final</p>
                   <p className="text-xl font-bold text-white">{report.monthStock.stockFinal}</p>
                 </div>
+              </div>
+
+              <h3 className="text-lg font-medium text-white mb-3">Detalle por producto</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-600">
+                      <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Stock inicial</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Entradas</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Salidas</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Stock final</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.monthStock.items.map((item) => (
+                      <tr key={item.productId} className="border-b border-slate-700/50 hover:bg-slate-800/30">
+                        <td className="py-3 px-2 text-white font-medium">{item.productName}</td>
+                        <td className="py-3 px-2 text-right text-blue-400">{item.stockInicial}</td>
+                        <td className="py-3 px-2 text-right text-emerald-400">{item.entradas}</td>
+                        <td className="py-3 px-2 text-right text-red-400">{item.salidas}</td>
+                        <td className="py-3 px-2 text-right text-white font-medium">{item.stockFinal}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {report.monthStock.items.length === 0 && (
+                  <p className="text-center text-slate-400 py-8">No hay stock para el mes seleccionado</p>
+                )}
               </div>
             </div>
           ) : (
@@ -373,6 +454,7 @@ export function Reports() {
             </div>
           )}
 
+          <h3 className="text-lg font-medium text-white mb-3">Detalle de movimientos</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
