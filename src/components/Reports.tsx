@@ -23,6 +23,7 @@ function formatType(type: string) {
 }
 
 const REPORT_HEADERS = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"] as const;
+const MONTHLY_HEADERS = ["Mes", "Stock inicial", "Entradas", "Salidas", "Stock final"] as const;
 
 function movementRows(movements: Movement[]) {
   return movements.map((m) => [
@@ -33,6 +34,16 @@ function movementRows(movements: Movement[]) {
     String(m.quantity),
     m.technician?.name || "-",
     m.reason || "-",
+  ]);
+}
+
+function monthlyRows(monthlyStock: MonthlyStock[]) {
+  return monthlyStock.map((m) => [
+    m.label,
+    String(m.stockInicial),
+    String(m.entradas),
+    String(m.salidas),
+    String(m.stockFinal),
   ]);
 }
 
@@ -65,9 +76,19 @@ interface Movement {
   technician?: { id: string; name: string } | null;
 }
 
+interface MonthlyStock {
+  month: string;
+  label: string;
+  stockInicial: number;
+  entradas: number;
+  salidas: number;
+  stockFinal: number;
+}
+
 interface ReportData {
   movements: Movement[];
   summary: { totalEntradas: number; totalSalidas: number; totalMovimientos: number };
+  monthlyStock: MonthlyStock[];
 }
 
 export function Reports() {
@@ -103,10 +124,27 @@ export function Reports() {
     setLoading(false);
   };
 
+  const canExport = Boolean(report && (report.movements.length > 0 || report.monthlyStock?.length > 0));
+
   const exportCSV = () => {
-    if (!report?.movements.length) return;
-    const rows = movementRows(report.movements);
-    const csv = [REPORT_HEADERS.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
+    if (!report || !canExport) return;
+
+    const sections: string[] = [];
+
+    if (report.monthlyStock?.length) {
+      sections.push(
+        MONTHLY_HEADERS.join(","),
+        ...monthlyRows(report.monthlyStock).map((r) => r.map((c) => `"${c}"`).join(",")),
+        ""
+      );
+    }
+
+    sections.push(
+      REPORT_HEADERS.join(","),
+      ...movementRows(report.movements).map((r) => r.map((c) => `"${c}"`).join(","))
+    );
+
+    const csv = sections.join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -117,7 +155,7 @@ export function Reports() {
   };
 
   const exportPDF = () => {
-    if (!report?.movements.length) return;
+    if (!report || !canExport) return;
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -138,16 +176,50 @@ export function Reports() {
       36
     );
 
-    autoTable(doc, {
-      startY: 42,
-      head: [REPORT_HEADERS as unknown as string[]],
-      body: movementRows(report.movements),
-      styles: { fontSize: 8, cellPadding: 2 },
-      headStyles: { fillColor: [5, 150, 105], textColor: 255 },
-      alternateRowStyles: { fillColor: [245, 245, 245] },
-      margin: { left: 14, right: 14 },
-      tableWidth: pageWidth - 28,
-    });
+    let nextY = 42;
+
+    if (report.monthlyStock?.length) {
+      doc.setFontSize(12);
+      doc.text("Stock inicial y final por mes", 14, nextY);
+      nextY += 4;
+
+      autoTable(doc, {
+        startY: nextY,
+        head: [MONTHLY_HEADERS as unknown as string[]],
+        body: monthlyRows(report.monthlyStock),
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        margin: { left: 14, right: 14 },
+        tableWidth: pageWidth - 28,
+        columnStyles: {
+          1: { halign: "right" },
+          2: { halign: "right" },
+          3: { halign: "right" },
+          4: { halign: "right" },
+        },
+      });
+
+      nextY = ((doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? nextY) + 10;
+    }
+
+    if (report.movements.length) {
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Detalle de movimientos", 14, nextY);
+      nextY += 4;
+
+      autoTable(doc, {
+        startY: nextY,
+        head: [REPORT_HEADERS as unknown as string[]],
+        body: movementRows(report.movements),
+        styles: { fontSize: 8, cellPadding: 2 },
+        headStyles: { fillColor: [5, 150, 105], textColor: 255 },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        margin: { left: 14, right: 14 },
+        tableWidth: pageWidth - 28,
+      });
+    }
 
     const pageCount = doc.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
@@ -175,7 +247,7 @@ export function Reports() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={exportCSV}
-            disabled={!report?.movements.length}
+            disabled={!canExport}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium"
           >
             <Download className="w-4 h-4" />
@@ -183,7 +255,7 @@ export function Reports() {
           </button>
           <button
             onClick={exportPDF}
-            disabled={!report?.movements.length}
+            disabled={!canExport}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-medium"
           >
             <FileDown className="w-4 h-4" />
@@ -282,6 +354,37 @@ export function Reports() {
             </div>
           </div>
 
+          {report.monthlyStock?.length > 0 && (
+            <div className="mb-8">
+              <h3 className="text-lg font-medium text-white mb-3">Stock inicial y final por mes</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-600">
+                      <th className="text-left py-3 px-2 text-slate-400 font-medium">Mes</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Stock inicial</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Entradas</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Salidas</th>
+                      <th className="text-right py-3 px-2 text-slate-400 font-medium">Stock final</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.monthlyStock.map((m) => (
+                      <tr key={m.month} className="border-b border-slate-700/50 hover:bg-slate-800/30">
+                        <td className="py-3 px-2 text-white font-medium">{m.label}</td>
+                        <td className="py-3 px-2 text-right text-slate-300">{m.stockInicial}</td>
+                        <td className="py-3 px-2 text-right text-emerald-400">{m.entradas}</td>
+                        <td className="py-3 px-2 text-right text-red-400">{m.salidas}</td>
+                        <td className="py-3 px-2 text-right text-white font-medium">{m.stockFinal}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <h3 className="text-lg font-medium text-white mb-3">Detalle de movimientos</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
