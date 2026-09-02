@@ -4,11 +4,12 @@ import {
   assertTechnicianStockForEntrada,
   InsufficientTechnicianStockError,
 } from "@/lib/technician-stock";
+import { InvalidMovementDateError, parseMovementDate } from "@/lib/movement-date";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { productId, warehouseId, type, quantity, reason, notes, technicianId } = body;
+    const { productId, warehouseId, type, quantity, reason, notes, technicianId, date } = body;
 
     if (!productId || !warehouseId || !type || quantity === undefined) {
       return NextResponse.json(
@@ -76,6 +77,16 @@ export async function POST(request: NextRequest) {
     const movementTechnicianId =
       (type === "salida" || type === "entrada") && technicianId ? technicianId : null;
 
+    let movedAt: Date | undefined;
+    try {
+      movedAt = parseMovementDate(date);
+    } catch (e) {
+      if (e instanceof InvalidMovementDateError) {
+        return NextResponse.json({ error: "La fecha del movimiento no es válida" }, { status: 400 });
+      }
+      throw e;
+    }
+
     await prisma.$transaction(async (tx) => {
       if (type === "entrada" && movementTechnicianId) {
         const pending = new Map<string, number>();
@@ -102,6 +113,7 @@ export async function POST(request: NextRequest) {
           reason: reason?.trim() || null,
           notes: notes?.trim() || null,
           technicianId: movementTechnicianId,
+          ...(movedAt ? { createdAt: movedAt } : {}),
         },
       });
     });

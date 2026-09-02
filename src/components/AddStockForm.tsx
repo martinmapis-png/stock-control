@@ -26,6 +26,14 @@ interface AddStockFormProps {
   onStockUpdated: () => void;
 }
 
+function todayLocalISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 interface StockLine {
   productId: string;
   name: string;
@@ -48,6 +56,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
   const [techStockByProduct, setTechStockByProduct] = useState<Record<string, number>>({});
   const [quantity, setQuantity] = useState("1");
   const [type, setType] = useState<"entrada" | "salida" | "ajuste">("entrada");
+  const [movementDate, setMovementDate] = useState(todayLocalISO);
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -238,6 +247,10 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       setError("Seleccioná depósito");
       return;
     }
+    if (!movementDate) {
+      setError("Seleccioná la fecha del movimiento");
+      return;
+    }
     if (type === "salida" && !technicianId) {
       setError("Las salidas requieren seleccionar un técnico responsable");
       return;
@@ -273,6 +286,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
               (type === "salida" || type === "entrada") && technicianId
                 ? technicianId
                 : undefined,
+            date: movementDate || undefined,
             lines: lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
           }),
         });
@@ -331,6 +345,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
             (type === "salida" || type === "entrada") && technicianId
               ? technicianId
               : undefined,
+          date: movementDate || undefined,
         }),
       });
 
@@ -513,7 +528,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">Tipo de movimiento</label>
             <select
@@ -527,47 +542,62 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">3. Cantidad (unidades)</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Fecha del movimiento</label>
             <input
-              type="number"
-              min={1}
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              placeholder="1"
+              type="date"
+              value={movementDate}
+              max={todayLocalISO()}
+              onChange={(e) => setMovementDate(e.target.value)}
+              required
               className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
             />
-            <div className="flex flex-wrap gap-2 mt-2">
-              <span className="text-xs text-slate-500 self-center mr-1">Sumar:</span>
-              {[10, 50, 100, 500].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => bumpQuantity(n)}
-                  className="px-2.5 py-1 text-xs rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200"
-                >
-                  +{n}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={addLineToList}
-              disabled={
-                !selectedProduct ||
-                !warehouseId ||
-                (type === "salida" && !technicianId) ||
-                !quantity ||
-                parseInt(quantity, 10) < 1
-              }
-              className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:pointer-events-none text-white text-sm font-medium transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Agregar a la lista (varios productos)
-            </button>
             <p className="text-xs text-slate-500 mt-1.5">
-              Si agregás el mismo producto otra vez, se suman las unidades en la misma línea.
+              Por defecto es hoy. Podés elegir un día anterior si el ingreso o la salida fue en otra fecha.
             </p>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">3. Cantidad (unidades)</label>
+          <input
+            type="number"
+            min={1}
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            placeholder="1"
+            className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
+          />
+          <div className="flex flex-wrap gap-2 mt-2">
+            <span className="text-xs text-slate-500 self-center mr-1">Sumar:</span>
+            {[10, 50, 100, 500].map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => bumpQuantity(n)}
+                className="px-2.5 py-1 text-xs rounded-md bg-slate-700 hover:bg-slate-600 text-slate-200"
+              >
+                +{n}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={addLineToList}
+            disabled={
+              !selectedProduct ||
+              !warehouseId ||
+              (type === "salida" && !technicianId) ||
+              !quantity ||
+              parseInt(quantity, 10) < 1
+            }
+            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:pointer-events-none text-white text-sm font-medium transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Agregar a la lista (varios productos)
+          </button>
+          <p className="text-xs text-slate-500 mt-1.5">
+            Si agregás el mismo producto otra vez, se suman las unidades en la misma línea.
+          </p>
         </div>
 
         {lines.length > 0 && (
@@ -672,6 +702,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
             loading ||
             !warehouseId ||
             (type === "salida" && !technicianId) ||
+            !movementDate ||
             (lines.length > 0
               ? false
               : !selectedProduct || !quantity || parseInt(quantity, 10) < 1)
