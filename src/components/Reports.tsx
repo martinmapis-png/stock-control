@@ -27,8 +27,19 @@ function currentMonthValue() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function todayValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function formatTime(date: Date) {
+  return date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+}
+
 const REPORT_HEADERS = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"] as const;
 const STOCK_HEADERS = ["Producto", "Stock inicial", "Entradas", "Salidas", "Stock final"] as const;
+const DAY_STOCK_HEADERS = ["Producto", "Cantidad", "Técnicos"] as const;
+const DAY_DETAIL_HEADERS = ["Hora", "Producto", "Depósito", "Cantidad", "Técnico", "Motivo"] as const;
 
 function movementRows(movements: Movement[]) {
   return movements.map((m) => [
@@ -114,9 +125,48 @@ interface ReportData {
   monthStock: MonthStock | null;
 }
 
+interface DayProductItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  technicians: string[];
+}
+
+interface DayExits {
+  day: string;
+  label: string;
+  technicianId: string | null;
+  technicianName: string | null;
+  totalUnidades: number;
+  totalMovimientos: number;
+  items: DayProductItem[];
+  movements: Movement[];
+}
+
+function dayStockRows(items: DayProductItem[]) {
+  return items.map((item) => [
+    item.productName,
+    String(item.quantity),
+    item.technicians.length ? item.technicians.join(", ") : "-",
+  ]);
+}
+
+function dayDetailRows(movements: Movement[]) {
+  return movements.map((m) => [
+    formatTime(new Date(m.createdAt)),
+    m.product.name,
+    m.warehouse.name,
+    String(m.quantity),
+    m.technician?.name || "-",
+    m.reason || "-",
+  ]);
+}
+
 export function Reports() {
+  const [mode, setMode] = useState<"month" | "day">("month");
   const [products, setProducts] = useState<{ id: string; name: string }[]>([]);
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
+  const [technicians, setTechnicians] = useState<{ id: string; name: string; active: boolean }[]>([]);
   const [filters, setFilters] = useState({
     productId: "",
     warehouseId: "",
@@ -125,16 +175,23 @@ export function Reports() {
     dateFrom: "",
     dateTo: "",
   });
+  const [dayFilters, setDayFilters] = useState({ day: todayValue(), technicianId: "" });
   const [report, setReport] = useState<ReportData | null>(null);
+  const [dayReport, setDayReport] = useState<DayExits | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/products").then((r) => r.json()).then((p) => setProducts(p));
     fetch("/api/warehouses").then((r) => r.json()).then((w) => setWarehouses(w));
+    fetch("/api/technicians?active=false")
+      .then((r) => r.json())
+      .then((t) => setTechnicians(Array.isArray(t) ? t : []));
   }, []);
 
   const fetchReport = async () => {
     setLoading(true);
+    setError("");
     const params = new URLSearchParams();
     if (filters.productId) params.set("productId", filters.productId);
     if (filters.warehouseId) params.set("warehouseId", filters.warehouseId);
@@ -145,16 +202,58 @@ export function Reports() {
 
     const res = await fetch(`/api/reports?${params}`);
     const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || "No se pudo generar el reporte");
+      setLoading(false);
+      return;
+    }
     setReport(data);
     setLoading(false);
   };
 
-  const canExport = Boolean(
-    report && (report.movements.length > 0 || (report.monthStock?.items.length ?? 0) > 0)
-  );
+  const fetchDayReport = async () => {
+    setLoading(true);
+    setError("");
+    const params = new URLSearchParams({ day: dayFilters.day });
+    if (dayFilters.technicianId) params.set("technicianId", dayFilters.technicianId);
+    const res = await fetch(`/api/reports?${params}`);
+    const data = await res.json();
+    if (!res.ok || !data.dayExits) {
+      setError(data.error || "No se pudo generar el reporte");
+      setLoading(false);
+      return;
+    }
+    setDayReport(data.dayExits);
+    setLoading(false);
+  };
+
+  const canExport =
+    mode === "day"
+      ? Boolean(dayReport && (dayReport.movements.length > 0 || dayReport.items.length > 0))
+      : Boolean(report && (report.movements.length > 0 || (report.monthStock?.items.length ?? 0) > 0));
 
   const exportCSV = () => {
-    if (!report || !canExport) return;
+    if (!canExport) return;
+
+    if (mode === "day" && dayReport) {
+      const sections = [
+        DAY_STOCK_HEADERS.join(","),
+        ...dayStockRows(dayReport.items).map((r) => r.map((c) => `"${c}"`).join(",")),
+        "",
+        DAY_DETAIL_HEADERS.join(","),
+        ...dayDetailRows(dayReport.movements).map((r) => r.map((c) => `"${c}"`).join(",")),
+      ];
+      const blob = new Blob(["\ufeff" + sections.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `salidas-${dayReport.day}${dayReport.technicianName ? `-${dayReport.technicianName}` : ""}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    if (!report) return;
 
     const sections: string[] = [];
 
@@ -182,7 +281,80 @@ export function Reports() {
   };
 
   const exportPDF = () => {
-    if (!report || !canExport) return;
+    if (!canExport) return;
+
+    if (mode === "day" && dayReport) {
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const who = dayReport.technicianName ? `Técnico: ${dayReport.technicianName}` : "Todos los técnicos";
+
+      doc.setFontSize(16);
+      doc.text("Salidas de stock", 14, 16);
+      doc.setFontSize(10);
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Día: ${dayReport.label}  ·  ${who}`, 14, 23);
+      doc.text(
+        `Unidades: ${dayReport.totalUnidades}  |  Movimientos: ${dayReport.totalMovimientos}  |  Generado: ${formatDate(new Date())}`,
+        14,
+        29
+      );
+      doc.setTextColor(0, 0, 0);
+
+      let nextY = 36;
+      if (dayReport.items.length) {
+        doc.setFontSize(12);
+        doc.text("Stock que salió", 14, nextY);
+        nextY += 4;
+        autoTable(doc, {
+          startY: nextY,
+          head: [DAY_STOCK_HEADERS as unknown as string[]],
+          body: dayStockRows(dayReport.items),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [220, 38, 38], textColor: 255 },
+          alternateRowStyles: { fillColor: [245, 245, 245] },
+          margin: { left: 14, right: 14 },
+          tableWidth: pageWidth - 28,
+          columnStyles: { 1: { halign: "right" } },
+        });
+        nextY = ((doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? nextY) + 10;
+      }
+
+      if (dayReport.movements.length) {
+        doc.setFontSize(12);
+        doc.setTextColor(0, 0, 0);
+        doc.text("Detalle", 14, nextY);
+        nextY += 4;
+        autoTable(doc, {
+          startY: nextY,
+          head: [DAY_DETAIL_HEADERS as unknown as string[]],
+          body: dayDetailRows(dayReport.movements),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [5, 150, 105], textColor: 255 },
+          alternateRowStyles: { fillColor: [245, 245, 245] },
+          margin: { left: 14, right: 14 },
+          tableWidth: pageWidth - 28,
+          columnStyles: { 3: { halign: "right" } },
+        });
+      }
+
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(120, 120, 120);
+        doc.text(
+          `StockControl · Página ${i} de ${pageCount}`,
+          pageWidth / 2,
+          doc.internal.pageSize.getHeight() - 8,
+          { align: "center" }
+        );
+      }
+
+      doc.save(`salidas-${dayReport.day}.pdf`);
+      return;
+    }
+
+    if (!report) return;
 
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
@@ -302,6 +474,59 @@ export function Reports() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          type="button"
+          onClick={() => setMode("month")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${
+            mode === "month" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-300 border border-slate-600"
+          }`}
+        >
+          Reporte mensual
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("day")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${
+            mode === "day" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-300 border border-slate-600"
+          }`}
+        >
+          Salidas del día
+        </button>
+      </div>
+
+      {mode === "day" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Día</label>
+            <input
+              type="date"
+              value={dayFilters.day}
+              onChange={(e) => setDayFilters((f) => ({ ...f, day: e.target.value }))}
+              className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Técnico</label>
+            <select
+              value={dayFilters.technicianId}
+              onChange={(e) => setDayFilters((f) => ({ ...f, technicianId: e.target.value }))}
+              className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="">Todos (día completo)</option>
+              {technicians.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                  {t.active ? "" : " (inactivo)"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="md:col-span-2 text-sm text-slate-400">
+            Lista todo el stock que salió ese día. Elegí un técnico para ver solo lo que retiró.
+          </p>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">Mes</label>
@@ -374,17 +599,94 @@ export function Reports() {
           />
         </div>
       </div>
+      )}
 
       <button
-        onClick={fetchReport}
-        disabled={loading}
+        onClick={mode === "day" ? fetchDayReport : fetchReport}
+        disabled={loading || (mode === "day" && !dayFilters.day)}
         className="flex items-center gap-2 px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium mb-6"
       >
         <Filter className="w-4 h-4" />
         {loading ? "Generando..." : "Generar reporte"}
       </button>
 
-      {report && (
+      {error && <p className="text-red-400 mb-6">{error}</p>}
+
+      {mode === "day" && dayReport && (
+        <>
+          <p className="text-sm text-slate-400 mb-3">
+            {dayReport.label}
+            {dayReport.technicianName ? ` · ${dayReport.technicianName}` : " · Todos los técnicos"}
+          </p>
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
+              <p className="text-sm text-slate-400">Unidades que salieron</p>
+              <p className="text-xl font-bold text-red-400">{dayReport.totalUnidades}</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+              <p className="text-sm text-slate-400">Movimientos</p>
+              <p className="text-xl font-bold text-white">{dayReport.totalMovimientos}</p>
+            </div>
+          </div>
+
+          <h3 className="text-lg font-medium text-white mb-3">Stock que salió</h3>
+          <div className="overflow-x-auto mb-8">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-600">
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
+                  <th className="text-right py-3 px-2 text-slate-400 font-medium">Cantidad</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Técnicos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayReport.items.map((item) => (
+                  <tr key={item.productId} className="border-b border-slate-700/50 hover:bg-slate-800/30">
+                    <td className="py-3 px-2 text-white font-medium">{item.productName}</td>
+                    <td className="py-3 px-2 text-right text-red-400 font-medium">{item.quantity}</td>
+                    <td className="py-3 px-2 text-slate-300">
+                      {item.technicians.length ? item.technicians.join(", ") : "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {dayReport.items.length === 0 && (
+              <p className="text-center text-slate-400 py-8">No hubo salidas en ese día</p>
+            )}
+          </div>
+
+          <h3 className="text-lg font-medium text-white mb-3">Detalle</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-600">
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Hora</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Depósito</th>
+                  <th className="text-right py-3 px-2 text-slate-400 font-medium">Cantidad</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Técnico</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayReport.movements.map((m) => (
+                  <tr key={m.id} className="border-b border-slate-700/50 hover:bg-slate-800/30">
+                    <td className="py-3 px-2 text-slate-300">{formatTime(new Date(m.createdAt))}</td>
+                    <td className="py-3 px-2 text-white">{m.product.name}</td>
+                    <td className="py-3 px-2 text-slate-300">{m.warehouse.name}</td>
+                    <td className="py-3 px-2 text-right font-medium text-white">{m.quantity}</td>
+                    <td className="py-3 px-2 text-slate-400">{m.technician?.name || "-"}</td>
+                    <td className="py-3 px-2 text-slate-400">{m.reason || "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {mode === "month" && report && (
         <>
           {report.monthStock ? (
             <div className="mb-8">

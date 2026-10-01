@@ -34,6 +34,28 @@ function monthLabel(d: Date) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Día calendario de Argentina (UTC-3, sin horario de verano). */
+function argentinaDayRange(iso: string) {
+  if (!DAY_RE.test(iso)) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  const probe = new Date(Date.UTC(y, m - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) {
+    return null;
+  }
+  return {
+    start: new Date(Date.UTC(y, m - 1, d, 3, 0, 0, 0)),
+    end: new Date(Date.UTC(y, m - 1, d + 1, 2, 59, 59, 999)),
+    label: new Date(Date.UTC(y, m - 1, d, 15, 0, 0)).toLocaleDateString("es-AR", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }),
+  };
+}
+
 type ProductAgg = {
   productId: string;
   productName: string;
@@ -44,9 +66,86 @@ type ProductAgg = {
   salidas: number;
 };
 
+async function dayExitsReport(day: string, technicianId: string | null) {
+  const range = argentinaDayRange(day);
+  if (!range) {
+    return NextResponse.json({ error: "Día inválido" }, { status: 400 });
+  }
+
+  let technicianName: string | null = null;
+  if (technicianId) {
+    const technician = await prisma.technician.findUnique({ where: { id: technicianId } });
+    if (!technician) {
+      return NextResponse.json({ error: "Técnico no encontrado" }, { status: 404 });
+    }
+    technicianName = technician.name;
+  }
+
+  const movements = await prisma.movement.findMany({
+    where: {
+      type: "salida",
+      createdAt: { gte: range.start, lte: range.end },
+      ...(technicianId ? { technicianId } : {}),
+    },
+    include: {
+      product: true,
+      warehouse: true,
+      technician: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const byProduct = new Map<
+    string,
+    { productId: string; productName: string; quantity: number; technicians: Set<string> }
+  >();
+
+  for (const movement of movements) {
+    let row = byProduct.get(movement.productId);
+    if (!row) {
+      row = {
+        productId: movement.productId,
+        productName: movement.product.name,
+        quantity: 0,
+        technicians: new Set<string>(),
+      };
+      byProduct.set(movement.productId, row);
+    }
+    row.quantity += movement.quantity;
+    if (movement.technician?.name) row.technicians.add(movement.technician.name);
+  }
+
+  const items = [...byProduct.values()]
+    .map((row) => ({
+      productId: row.productId,
+      productName: row.productName,
+      quantity: row.quantity,
+      technicians: [...row.technicians].sort((a, b) => a.localeCompare(b, "es")),
+    }))
+    .sort((a, b) => a.productName.localeCompare(b.productName, "es"));
+
+  return NextResponse.json({
+    dayExits: {
+      day,
+      label: range.label,
+      technicianId: technicianId || null,
+      technicianName,
+      totalUnidades: items.reduce((sum, item) => sum + item.quantity, 0),
+      totalMovimientos: movements.length,
+      items,
+      movements,
+    },
+  });
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    const day = searchParams.get("day");
+    if (day) {
+      return dayExitsReport(day, searchParams.get("technicianId"));
+    }
+
     const productId = searchParams.get("productId");
     const warehouseId = searchParams.get("warehouseId");
     const type = searchParams.get("type");
