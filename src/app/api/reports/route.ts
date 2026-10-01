@@ -83,7 +83,7 @@ async function dayExitsReport(day: string, technicianId: string | null) {
 
   const movements = await prisma.movement.findMany({
     where: {
-      type: "salida",
+      type: { in: ["salida", "entrada"] },
       createdAt: { gte: range.start, lte: range.end },
       ...(technicianId ? { technicianId } : {}),
     },
@@ -95,46 +95,92 @@ async function dayExitsReport(day: string, technicianId: string | null) {
     orderBy: { createdAt: "asc" },
   });
 
+  const salidas = movements.filter((movement) => movement.type === "salida");
+  const entradas = movements.filter((movement) => movement.type === "entrada");
+
   const byProduct = new Map<
     string,
-    { productId: string; productName: string; quantity: number; technicians: Set<string> }
+    {
+      productId: string;
+      productName: string;
+      entradas: number;
+      salidas: number;
+      technicians: Set<string>;
+    }
   >();
 
-  for (const movement of movements) {
-    let row = byProduct.get(movement.productId);
+  const ensure = (productId: string, productName: string) => {
+    let row = byProduct.get(productId);
     if (!row) {
-      row = {
-        productId: movement.productId,
-        productName: movement.product.name,
-        quantity: 0,
-        technicians: new Set<string>(),
-      };
-      byProduct.set(movement.productId, row);
+      row = { productId, productName, entradas: 0, salidas: 0, technicians: new Set<string>() };
+      byProduct.set(productId, row);
     }
-    row.quantity += movement.quantity;
+    return row;
+  };
+
+  for (const movement of movements) {
+    const row = ensure(movement.productId, movement.product.name);
+    if (movement.type === "entrada") row.entradas += movement.quantity;
+    else row.salidas += movement.quantity;
     if (movement.technician?.name) row.technicians.add(movement.technician.name);
   }
 
-  const items = [...byProduct.values()]
-    .map((row) => ({
-      productId: row.productId,
-      productName: row.productName,
-      quantity: row.quantity,
-      technicians: [...row.technicians].sort((a, b) => a.localeCompare(b, "es")),
-    }))
-    .sort((a, b) => a.productName.localeCompare(b.productName, "es"));
-
-  return NextResponse.json({
-    dayExits: {
+  const summarize = (list: typeof movements) => {
+    const totals = new Map<string, { productId: string; productName: string; quantity: number; technicians: Set<string> }>();
+    for (const movement of list) {
+      let row = totals.get(movement.productId);
+      if (!row) {
+        row = {
+          productId: movement.productId,
+          productName: movement.product.name,
+          quantity: 0,
+          technicians: new Set<string>(),
+        };
+        totals.set(movement.productId, row);
+      }
+      row.quantity += movement.quantity;
+      if (movement.technician?.name) row.technicians.add(movement.technician.name);
+    }
+    const items = [...totals.values()]
+      .map((row) => ({
+        productId: row.productId,
+        productName: row.productName,
+        quantity: row.quantity,
+        technicians: [...row.technicians].sort((a, b) => a.localeCompare(b, "es")),
+      }))
+      .sort((a, b) => a.productName.localeCompare(b.productName, "es"));
+    return {
       day,
       label: range.label,
       technicianId: technicianId || null,
       technicianName,
       totalUnidades: items.reduce((sum, item) => sum + item.quantity, 0),
-      totalMovimientos: movements.length,
+      totalMovimientos: list.length,
       items,
-      movements,
-    },
+      movements: list,
+    };
+  };
+
+  const differences = [...byProduct.values()]
+    .map((row) => ({
+      productId: row.productId,
+      productName: row.productName,
+      entradas: row.entradas,
+      salidas: row.salidas,
+      diferencia: row.entradas - row.salidas,
+      technicians: [...row.technicians].sort((a, b) => a.localeCompare(b, "es")),
+    }))
+    .sort((a, b) => {
+      const aDiff = a.diferencia !== 0 ? 0 : 1;
+      const bDiff = b.diferencia !== 0 ? 0 : 1;
+      if (aDiff !== bDiff) return aDiff - bDiff;
+      return a.productName.localeCompare(b.productName, "es");
+    });
+
+  return NextResponse.json({
+    dayExits: summarize(salidas),
+    dayEntries: summarize(entradas),
+    differences,
   });
 }
 

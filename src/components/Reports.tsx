@@ -39,6 +39,7 @@ function formatTime(date: Date) {
 const REPORT_HEADERS = ["Fecha", "Producto", "Depósito", "Tipo", "Cantidad", "Técnico", "Motivo"] as const;
 const STOCK_HEADERS = ["Producto", "Stock inicial", "Entradas", "Salidas", "Stock final"] as const;
 const DAY_STOCK_HEADERS = ["Producto", "Cantidad", "Técnicos"] as const;
+const DAY_ENTRY_HEADERS = ["Producto", "Entradas", "Salidas", "Diferencia", "Técnicos"] as const;
 const DAY_DETAIL_HEADERS = ["Hora", "Producto", "Depósito", "Cantidad", "Técnico", "Motivo"] as const;
 
 function movementRows(movements: Movement[]) {
@@ -95,7 +96,7 @@ interface Movement {
   quantity: number;
   reason: string | null;
   createdAt: string;
-  product: { name: string };
+  product: { id: string; name: string };
   warehouse: { name: string };
   technician?: { id: string; name: string } | null;
 }
@@ -143,10 +144,40 @@ interface DayExits {
   movements: Movement[];
 }
 
+interface DayDifference {
+  productId: string;
+  productName: string;
+  entradas: number;
+  salidas: number;
+  diferencia: number;
+  technicians: string[];
+}
+
+interface DayBundle {
+  exits: DayExits;
+  entries: DayExits;
+  differences: DayDifference[];
+}
+
+function formatDiff(value: number) {
+  if (value > 0) return `+${value}`;
+  return String(value);
+}
+
 function dayStockRows(items: DayProductItem[]) {
   return items.map((item) => [
     item.productName,
     String(item.quantity),
+    item.technicians.length ? item.technicians.join(", ") : "-",
+  ]);
+}
+
+function dayEntryRows(items: DayDifference[]) {
+  return items.map((item) => [
+    item.productName,
+    String(item.entradas),
+    String(item.salidas),
+    formatDiff(item.diferencia),
     item.technicians.length ? item.technicians.join(", ") : "-",
   ]);
 }
@@ -163,7 +194,7 @@ function dayDetailRows(movements: Movement[]) {
 }
 
 export function Reports() {
-  const [mode, setMode] = useState<"month" | "day">("month");
+  const [mode, setMode] = useState<"month" | "day" | "entries">("month");
   const [products, setProducts] = useState<{ id: string; name: string }[]>([]);
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
   const [technicians, setTechnicians] = useState<{ id: string; name: string; active: boolean }[]>([]);
@@ -177,7 +208,7 @@ export function Reports() {
   });
   const [dayFilters, setDayFilters] = useState({ day: todayValue(), technicianId: "" });
   const [report, setReport] = useState<ReportData | null>(null);
-  const [dayReport, setDayReport] = useState<DayExits | null>(null);
+  const [dayBundle, setDayBundle] = useState<DayBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -218,22 +249,52 @@ export function Reports() {
     if (dayFilters.technicianId) params.set("technicianId", dayFilters.technicianId);
     const res = await fetch(`/api/reports?${params}`);
     const data = await res.json();
-    if (!res.ok || !data.dayExits) {
+    if (!res.ok || !data.dayExits || !data.dayEntries) {
       setError(data.error || "No se pudo generar el reporte");
       setLoading(false);
       return;
     }
-    setDayReport(data.dayExits);
+    setDayBundle({
+      exits: data.dayExits,
+      entries: data.dayEntries,
+      differences: Array.isArray(data.differences) ? data.differences : [],
+    });
     setLoading(false);
   };
 
-  const canExport =
-    mode === "day"
-      ? Boolean(dayReport && (dayReport.movements.length > 0 || dayReport.items.length > 0))
-      : Boolean(report && (report.movements.length > 0 || (report.monthStock?.items.length ?? 0) > 0));
+  const dayReport = mode === "entries" ? dayBundle?.entries ?? null : dayBundle?.exits ?? null;
+  const isDayMode = mode === "day" || mode === "entries";
+
+  const canExport = isDayMode
+    ? Boolean(
+        dayBundle &&
+          (mode === "entries"
+            ? dayBundle.differences.length > 0 || dayBundle.entries.movements.length > 0
+            : dayBundle.exits.movements.length > 0 || dayBundle.exits.items.length > 0)
+      )
+    : Boolean(report && (report.movements.length > 0 || (report.monthStock?.items.length ?? 0) > 0));
 
   const exportCSV = () => {
     if (!canExport) return;
+
+    if (mode === "entries" && dayBundle) {
+      const sections = [
+        DAY_ENTRY_HEADERS.join(","),
+        ...dayEntryRows(dayBundle.differences).map((r) => r.map((c) => `"${c}"`).join(",")),
+        "",
+        DAY_DETAIL_HEADERS.join(","),
+        ...dayDetailRows(dayBundle.entries.movements).map((r) => r.map((c) => `"${c}"`).join(",")),
+      ];
+      const blob = new Blob(["\ufeff" + sections.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const who = dayBundle.entries.technicianName ? `-${dayBundle.entries.technicianName}` : "";
+      a.download = `entradas-${dayBundle.entries.day}${who}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
 
     if (mode === "day" && dayReport) {
       const sections = [
@@ -282,6 +343,87 @@ export function Reports() {
 
   const exportPDF = () => {
     if (!canExport) return;
+
+    if (mode === "entries" && dayBundle) {
+      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const entries = dayBundle.entries;
+      const who = entries.technicianName ? `Técnico: ${entries.technicianName}` : "Todos los técnicos";
+      const mismatches = dayBundle.differences.filter((item) => item.diferencia !== 0).length;
+
+      doc.setFontSize(16);
+      doc.text("Entradas de stock", 14, 16);
+      doc.setFontSize(10);
+      doc.setTextColor(80, 80, 80);
+      doc.text(`Día: ${entries.label}  ·  ${who}`, 14, 23);
+      doc.text(
+        `Unidades: ${entries.totalUnidades}  |  Movimientos: ${entries.totalMovimientos}  |  Diferencias: ${mismatches}  |  Generado: ${formatDate(new Date())}`,
+        14,
+        29
+      );
+      doc.setTextColor(0, 0, 0);
+
+      let nextY = 36;
+      if (dayBundle.differences.length) {
+        doc.setFontSize(12);
+        doc.text("Entradas y diferencia contra las salidas", 14, nextY);
+        nextY += 4;
+        autoTable(doc, {
+          startY: nextY,
+          head: [DAY_ENTRY_HEADERS as unknown as string[]],
+          body: dayEntryRows(dayBundle.differences),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [5, 150, 105], textColor: 255 },
+          alternateRowStyles: { fillColor: [245, 245, 245] },
+          margin: { left: 14, right: 14 },
+          tableWidth: pageWidth - 28,
+          columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } },
+          didParseCell: (data) => {
+            if (data.section !== "body") return;
+            const item = dayBundle.differences[data.row.index];
+            if (item && item.diferencia !== 0) {
+              data.cell.styles.fillColor = [254, 243, 199];
+              if (data.column.index === 3) data.cell.styles.textColor = [180, 83, 9];
+            }
+          },
+        });
+        nextY = ((doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable?.finalY ?? nextY) + 10;
+      }
+
+      if (entries.movements.length) {
+        doc.setFontSize(12);
+        doc.setTextColor(0, 0, 0);
+        doc.text("Detalle de entradas", 14, nextY);
+        nextY += 4;
+        autoTable(doc, {
+          startY: nextY,
+          head: [DAY_DETAIL_HEADERS as unknown as string[]],
+          body: dayDetailRows(entries.movements),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [5, 150, 105], textColor: 255 },
+          alternateRowStyles: { fillColor: [245, 245, 245] },
+          margin: { left: 14, right: 14 },
+          tableWidth: pageWidth - 28,
+          columnStyles: { 3: { halign: "right" } },
+        });
+      }
+
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(120, 120, 120);
+        doc.text(
+          `StockControl · Página ${i} de ${pageCount}`,
+          pageWidth / 2,
+          doc.internal.pageSize.getHeight() - 8,
+          { align: "center" }
+        );
+      }
+
+      doc.save(`entradas-${entries.day}.pdf`);
+      return;
+    }
 
     if (mode === "day" && dayReport) {
       const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
@@ -493,9 +635,18 @@ export function Reports() {
         >
           Salidas del día
         </button>
+        <button
+          type="button"
+          onClick={() => setMode("entries")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${
+            mode === "entries" ? "bg-emerald-600 text-white" : "bg-slate-900 text-slate-300 border border-slate-600"
+          }`}
+        >
+          Entradas del día
+        </button>
       </div>
 
-      {mode === "day" ? (
+      {mode === "day" || mode === "entries" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">Día</label>
@@ -523,7 +674,9 @@ export function Reports() {
             </select>
           </div>
           <p className="md:col-span-2 text-sm text-slate-400">
-            Lista todo el stock que salió ese día. Elegí un técnico para ver solo lo que retiró.
+            {mode === "entries"
+              ? "Lista las entradas de ese día y marca en amarillo los productos cuya cantidad no coincide con las salidas."
+              : "Lista todo el stock que salió ese día. Elegí un técnico para ver solo lo que retiró."}
           </p>
         </div>
       ) : (
@@ -602,8 +755,8 @@ export function Reports() {
       )}
 
       <button
-        onClick={mode === "day" ? fetchDayReport : fetchReport}
-        disabled={loading || (mode === "day" && !dayFilters.day)}
+        onClick={mode === "day" || mode === "entries" ? fetchDayReport : fetchReport}
+        disabled={loading || ((mode === "day" || mode === "entries") && !dayFilters.day)}
         className="flex items-center gap-2 px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium mb-6"
       >
         <Filter className="w-4 h-4" />
@@ -611,6 +764,124 @@ export function Reports() {
       </button>
 
       {error && <p className="text-red-400 mb-6">{error}</p>}
+
+      {mode === "entries" && dayBundle && (
+        <>
+          <p className="text-sm text-slate-400 mb-3">
+            {dayBundle.entries.label}
+            {dayBundle.entries.technicianName ? ` · ${dayBundle.entries.technicianName}` : " · Todos los técnicos"}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+              <p className="text-sm text-slate-400">Unidades que entraron</p>
+              <p className="text-xl font-bold text-emerald-400">{dayBundle.entries.totalUnidades}</p>
+            </div>
+            <div className="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+              <p className="text-sm text-slate-400">Movimientos</p>
+              <p className="text-xl font-bold text-white">{dayBundle.entries.totalMovimientos}</p>
+            </div>
+            <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <p className="text-sm text-slate-400">Productos con diferencia</p>
+              <p className="text-xl font-bold text-amber-300">
+                {dayBundle.differences.filter((item) => item.diferencia !== 0).length}
+              </p>
+            </div>
+          </div>
+
+          <h3 className="text-lg font-medium text-white mb-3">Entradas y diferencias</h3>
+          <div className="overflow-x-auto mb-8">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-600">
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
+                  <th className="text-right py-3 px-2 text-slate-400 font-medium">Entradas</th>
+                  <th className="text-right py-3 px-2 text-slate-400 font-medium">Salidas</th>
+                  <th className="text-right py-3 px-2 text-slate-400 font-medium">Diferencia</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Técnicos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayBundle.differences.map((item) => {
+                  const mismatch = item.diferencia !== 0;
+                  return (
+                    <tr
+                      key={item.productId}
+                      className={`border-b border-slate-700/50 ${
+                        mismatch ? "bg-amber-500/15" : "hover:bg-slate-800/30"
+                      }`}
+                    >
+                      <td className="py-3 px-2 text-white font-medium">
+                        {item.productName}
+                        {mismatch && (
+                          <span className="ml-2 px-2 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-300">
+                            Difiere
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2 text-right text-emerald-400">{item.entradas}</td>
+                      <td className="py-3 px-2 text-right text-red-400">{item.salidas}</td>
+                      <td
+                        className={`py-3 px-2 text-right font-medium ${
+                          mismatch ? "text-amber-300" : "text-slate-400"
+                        }`}
+                      >
+                        {formatDiff(item.diferencia)}
+                      </td>
+                      <td className="py-3 px-2 text-slate-300">
+                        {item.technicians.length ? item.technicians.join(", ") : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {dayBundle.differences.length === 0 && (
+              <p className="text-center text-slate-400 py-8">No hubo entradas ni salidas en ese día</p>
+            )}
+          </div>
+
+          <h3 className="text-lg font-medium text-white mb-3">Detalle de entradas</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-600">
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Hora</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Depósito</th>
+                  <th className="text-right py-3 px-2 text-slate-400 font-medium">Cantidad</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Técnico</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dayBundle.entries.movements.map((m) => {
+                  const mismatch = dayBundle.differences.some(
+                    (item) => item.productId === m.product.id && item.diferencia !== 0
+                  );
+                  return (
+                    <tr
+                      key={m.id}
+                      className={`border-b border-slate-700/50 ${
+                        mismatch ? "bg-amber-500/15" : "hover:bg-slate-800/30"
+                      }`}
+                    >
+                      <td className="py-3 px-2 text-slate-300">{formatTime(new Date(m.createdAt))}</td>
+                      <td className="py-3 px-2 text-white">{m.product.name}</td>
+                      <td className="py-3 px-2 text-slate-300">{m.warehouse.name}</td>
+                      <td className="py-3 px-2 text-right font-medium text-white">{m.quantity}</td>
+                      <td className="py-3 px-2 text-slate-400">{m.technician?.name || "-"}</td>
+                      <td className="py-3 px-2 text-slate-400">{m.reason || "-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {dayBundle.entries.movements.length === 0 && (
+              <p className="text-center text-slate-400 py-8">No hubo entradas en ese día</p>
+            )}
+          </div>
+        </>
+      )}
 
       {mode === "day" && dayReport && (
         <>
