@@ -23,12 +23,20 @@ interface ProductWithStock {
   sku: string | null;
   barcode: string | null;
   lowStockThreshold: number | null;
+  category: { id: string; name: string } | null;
   stock: { quantity: number; warehouse: { name: string } }[];
+}
+
+interface CategoryOption {
+  id: string;
+  name: string;
 }
 
 export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockTableProps) {
   const [products, setProducts] = useState<ProductWithStock[]>([]);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [editingThreshold, setEditingThreshold] = useState<string | null>(null);
   const [thresholdValue, setThresholdValue] = useState("");
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -57,6 +65,9 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
     fetch("/api/warehouses")
       .then((r) => r.json())
       .then((data) => setWarehouses(Array.isArray(data) ? data : []));
+    fetch("/api/categories")
+      .then((r) => r.json())
+      .then((data) => setCategories(Array.isArray(data) ? data : []));
   }, []);
 
   useEffect(() => {
@@ -136,6 +147,25 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
     }
   };
 
+  const handleCategoryChange = async (productId: string, categoryId: string) => {
+    try {
+      const res = await fetch(`/api/products/${productId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId: categoryId || null }),
+      });
+      if (res.ok) fetchProducts();
+    } catch {
+      // ignore
+    }
+  };
+
+  const visibleProducts = products.filter((product) => {
+    if (!categoryFilter) return true;
+    if (categoryFilter === "none") return !product.category;
+    return product.category?.id === categoryFilter;
+  });
+
   const handleSaveThreshold = async (productId: string) => {
     const val = thresholdValue.trim() === "" ? null : parseInt(thresholdValue, 10);
     if (thresholdValue.trim() !== "" && (isNaN(val as number) || (val as number) < 0)) return;
@@ -156,11 +186,24 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
 
   return (
     <div className="bg-slate-800/50 rounded-xl p-6 border border-slate-700/50">
-      <div className="flex items-center gap-4 mb-4">
+      <div className="flex flex-wrap items-center gap-4 mb-4">
         <h2 className="text-xl font-semibold text-white flex items-center gap-2">
           <Package className="w-5 h-5" />
           Inventario
         </h2>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm"
+        >
+          <option value="">Todas las categorías</option>
+          <option value="none">Sin categoría</option>
+          {categories.map((category) => (
+            <option key={category.id} value={category.id}>
+              {category.name}
+            </option>
+          ))}
+        </select>
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
@@ -251,6 +294,7 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
           <thead>
             <tr className="border-b border-slate-600">
               <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
+              <th className="text-left py-3 px-2 text-slate-400 font-medium">Categoría</th>
               <th className="text-left py-3 px-2 text-slate-400 font-medium">SKU / Código</th>
               <th className="text-left py-3 px-2 text-slate-400 font-medium">Stock por depósito</th>
               <th className="text-right py-3 px-2 text-slate-400 font-medium">Total</th>
@@ -262,12 +306,26 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
             </tr>
           </thead>
           <tbody>
-            {products.map((p) => {
+            {visibleProducts.map((p) => {
               const total = p.stock.reduce((s, st) => s + st.quantity, 0);
               const isEditing = editingThreshold === p.id;
               return (
                 <tr key={p.id} className="border-b border-slate-700/50 hover:bg-slate-800/30">
                   <td className="py-3 px-2 text-white font-medium">{p.name}</td>
+                  <td className="py-3 px-2">
+                    <select
+                      value={p.category?.id ?? ""}
+                      onChange={(e) => handleCategoryChange(p.id, e.target.value)}
+                      className="max-w-[11rem] px-2 py-1 rounded bg-slate-900 border border-slate-600 text-slate-200 text-xs"
+                    >
+                      <option value="">Sin categoría</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="py-3 px-2 text-slate-400">
                     {[p.sku, p.barcode].filter(Boolean).join(" / ") || "-"}
                   </td>
@@ -374,8 +432,12 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
             })}
           </tbody>
         </table>
-        {products.length === 0 && (
-          <p className="text-center text-slate-400 py-12">No hay productos. Agrega uno para empezar.</p>
+        {visibleProducts.length === 0 && (
+          <p className="text-center text-slate-400 py-12">
+            {products.length === 0
+              ? "No hay productos. Agrega uno para empezar."
+              : "No hay productos en esta categoría."}
+          </p>
         )}
       </div>
     </div>

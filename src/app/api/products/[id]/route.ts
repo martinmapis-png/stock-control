@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+const productInclude = {
+  stock: { include: { warehouse: true } },
+  category: { select: { id: true, name: true } },
+};
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -9,7 +14,7 @@ export async function GET(
     const { id } = await params;
     const product = await prisma.product.findUnique({
       where: { id },
-      include: { stock: { include: { warehouse: true } } },
+      include: productInclude,
     });
 
     if (!product) {
@@ -30,7 +35,7 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, sku, barcode, description, lowStockThreshold } = body;
+    const { name, sku, barcode, description, lowStockThreshold, categoryId } = body;
 
     const existing = await prisma.product.findUnique({ where: { id } });
     if (!existing) {
@@ -48,11 +53,24 @@ export async function PUT(
         : Math.max(0, parseInt(String(lowStockThreshold), 10));
       data.lowStockThreshold = val !== null && !isNaN(val) ? val : null;
     }
+    if (categoryId !== undefined) {
+      if (categoryId === null || categoryId === "") {
+        data.categoryId = null;
+      } else if (typeof categoryId !== "string") {
+        return NextResponse.json({ error: "Categoría inválida" }, { status: 400 });
+      } else {
+        const category = await prisma.category.findUnique({ where: { id: categoryId } });
+        if (!category) {
+          return NextResponse.json({ error: "Categoría no encontrada" }, { status: 400 });
+        }
+        data.categoryId = category.id;
+      }
+    }
 
     const product = await prisma.product.update({
       where: { id },
       data,
-      include: { stock: { include: { warehouse: true } } },
+      include: productInclude,
     });
 
     return NextResponse.json(product);

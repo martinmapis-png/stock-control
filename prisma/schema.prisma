@@ -31,15 +31,25 @@ model Technician {
   movements Movement[]
 }
 
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
 model Product {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   name              String
-  sku               String?  @unique
+  sku               String?   @unique
   barcode           String?
   description       String?
-  lowStockThreshold Int?     // Avisar cuando stock total <= este valor (null = no avisar)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  lowStockThreshold Int?      // Avisar cuando stock total <= este valor (null = no avisar)
+  categoryId        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  category          Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   stock             Stock[]
   movements         Movement[]
 }

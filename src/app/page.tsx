@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutDashboard, Package, Warehouse, FileText, Box, Menu, Users, LogOut, Wrench } from "lucide-react";
+import { LayoutDashboard, Package, Warehouse, FileText, Box, Menu, Users, LogOut, Wrench, FolderTree } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LoginForm } from "@/components/LoginForm";
 import { Dashboard } from "@/components/Dashboard";
@@ -12,8 +12,9 @@ import { WarehouseManager } from "@/components/WarehouseManager";
 import { Reports } from "@/components/Reports";
 import { UserManager } from "@/components/UserManager";
 import { TechnicianManager } from "@/components/TechnicianManager";
+import { CategoryManager } from "@/components/CategoryManager";
 
-type Tab = "dashboard" | "products" | "stock" | "warehouses" | "technicians" | "users" | "reports";
+type Tab = "dashboard" | "products" | "stock" | "categories" | "warehouses" | "technicians" | "users" | "reports";
 
 export default function Home() {
   const { user, logout, isLoading } = useAuth();
@@ -26,6 +27,7 @@ export default function Home() {
   const tabs: { id: Tab; label: string; icon: React.ElementType; adminOnly?: boolean }[] = [
     { id: "dashboard", label: "Stock actual", icon: LayoutDashboard },
     { id: "products", label: "Productos", icon: Package },
+    { id: "categories", label: "Categorías", icon: FolderTree },
     { id: "stock", label: "Movimientos", icon: Box },
     { id: "warehouses", label: "Depósitos", icon: Warehouse },
     { id: "technicians", label: "Técnicos", icon: Wrench },
@@ -161,6 +163,8 @@ export default function Home() {
             />
           </div>
         )}
+
+        {activeTab === "categories" && <CategoryManager key={refreshKey} />}
 
         {activeTab === "warehouses" && <WarehouseManager key={refreshKey} />}
 

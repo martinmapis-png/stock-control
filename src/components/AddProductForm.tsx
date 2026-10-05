@@ -9,6 +9,11 @@ interface Warehouse {
   name: string;
 }
 
+interface CategoryOption {
+  id: string;
+  name: string;
+}
+
 interface AddProductFormProps {
   onProductAdded: () => void;
   onProductFound?: (product: { id: string; name: string }) => void;
@@ -25,8 +30,10 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
     lowStockThreshold: "",
     initialWarehouseId: "",
     initialQuantity: "",
+    categoryId: "",
   });
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +41,9 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
     fetch("/api/warehouses")
       .then((r) => r.json())
       .then((data) => setWarehouses(Array.isArray(data) ? data : []));
+    fetch("/api/categories")
+      .then((r) => r.json())
+      .then((data) => setCategories(Array.isArray(data) ? data : []));
   }, []);
 
   useEffect(() => {
@@ -87,6 +97,7 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
         lowStockThreshold: form.lowStockThreshold,
         initialWarehouseId: form.initialWarehouseId.trim() || undefined,
         initialQuantity: form.initialQuantity.trim() || undefined,
+        categoryId: form.categoryId || null,
       };
 
       const res = await fetch("/api/products", {
@@ -111,6 +122,7 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
         lowStockThreshold: "",
         initialWarehouseId: warehouses.length === 1 ? warehouses[0].id : "",
         initialQuantity: "",
+        categoryId: "",
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
@@ -180,6 +192,24 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
               </button>
             </div>
           </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-300 mb-1">Categoría</label>
+          <select
+            value={form.categoryId}
+            onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value }))}
+            className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
+          >
+            <option value="">Sin categoría</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+          {categories.length === 0 && (
+            <p className="text-xs text-slate-500 mt-1">Podés crear categorías en la pestaña Categorías.</p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">Descripción</label>

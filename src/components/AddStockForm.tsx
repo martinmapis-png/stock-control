@@ -10,6 +10,7 @@ interface Product {
   name: string;
   sku: string | null;
   barcode: string | null;
+  category?: { id: string; name: string } | null;
 }
 
 interface Warehouse {
@@ -123,7 +124,8 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
         const name = p.name.toLowerCase();
         const sku = (p.sku ?? "").toLowerCase();
         const barcode = p.barcode ?? "";
-        return name.includes(q) || sku.includes(q) || barcode.includes(q);
+        const category = (p.category?.name ?? "").toLowerCase();
+        return name.includes(q) || sku.includes(q) || barcode.includes(q) || category.includes(q);
       })
       .slice(0, 15);
   }, [products, productQuery]);
@@ -457,6 +459,9 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
                           } ${selectedProduct?.id === p.id ? "border-l-2 border-emerald-500" : ""}`}
                         >
                           <span className="font-medium">{p.name}</span>
+                          {p.category?.name && (
+                            <span className="ml-2 text-xs text-emerald-400">{p.category.name}</span>
+                          )}
                           {(p.sku || p.barcode) && (
                             <span className="block text-xs text-slate-400 mt-0.5">
                               {[p.sku ? `SKU ${p.sku}` : null, p.barcode ? `Cód. ${p.barcode}` : null]
