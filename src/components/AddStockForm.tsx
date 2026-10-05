@@ -23,6 +23,11 @@ interface Technician {
   name: string;
 }
 
+interface CategoryOption {
+  id: string;
+  name: string;
+}
+
 interface AddStockFormProps {
   onStockUpdated: () => void;
 }
@@ -47,6 +52,8 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [categoryId, setCategoryId] = useState("");
   const [productQuery, setProductQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -71,6 +78,9 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       .then((r) => r.json())
       .then((data) => setProducts(Array.isArray(data) ? data : []));
     fetch("/api/technicians").then((r) => r.json()).then(setTechnicians);
+    fetch("/api/categories")
+      .then((r) => r.json())
+      .then((data) => setCategories(Array.isArray(data) ? data : []));
   }, []);
 
   useEffect(() => {
@@ -223,12 +233,46 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
   };
 
   const setLineQuantity = (productId: string, value: string) => {
+    if (value.trim() === "") {
+      setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, quantity: 0 } : l)));
+      return;
+    }
     const n = parseInt(value, 10);
-    if (isNaN(n) || n < 1) return;
-    setLines((prev) =>
-      prev.map((l) => (l.productId === productId ? { ...l, quantity: n } : l))
-    );
+    if (isNaN(n) || n < 0) return;
+    setLines((prev) => prev.map((l) => (l.productId === productId ? { ...l, quantity: n } : l)));
   };
+
+  const loadCategoryProducts = () => {
+    if (!categoryId) {
+      setError("Elegí una categoría");
+      return;
+    }
+    if (!warehouseId) {
+      setError("Seleccioná el depósito primero");
+      return;
+    }
+    if (type === "salida" && !technicianId) {
+      setError("Las salidas requieren técnico responsable antes de traer la categoría");
+      return;
+    }
+    const fromCategory = products
+      .filter((p) => p.category?.id === categoryId)
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
+    if (fromCategory.length === 0) {
+      setError("Esa categoría no tiene productos");
+      return;
+    }
+    setError(null);
+    setLines((prev) => {
+      const existing = new Set(prev.map((l) => l.productId));
+      const added = fromCategory
+        .filter((p) => !existing.has(p.id))
+        .map((p) => ({ productId: p.id, name: p.name, quantity: 0 }));
+      return [...prev, ...added];
+    });
+  };
+
+  const linesToRegister = lines.filter((line) => line.quantity > 0);
 
   const handleScan = async (code: string) => {
     setShowScanner(false);
@@ -257,8 +301,12 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       setError("Las salidas requieren seleccionar un técnico responsable");
       return;
     }
-    if (type === "entrada" && technicianId && lines.length > 0) {
-      for (const line of lines) {
+    if (lines.length > 0 && linesToRegister.length === 0) {
+      setError("Cargá la cantidad de al menos un producto. Los que queden en 0 no se registran.");
+      return;
+    }
+    if (type === "entrada" && technicianId && linesToRegister.length > 0) {
+      for (const line of linesToRegister) {
         const available = techStockByProduct[line.productId] ?? 0;
         if (line.quantity > available) {
           setError(
@@ -271,7 +319,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       }
     }
 
-    const useBatch = lines.length > 0;
+    const useBatch = linesToRegister.length > 0;
 
     if (useBatch) {
       setError(null);
@@ -289,7 +337,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
                 ? technicianId
                 : undefined,
             date: movementDate || undefined,
-            lines: lines.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+            lines: linesToRegister.map((l) => ({ productId: l.productId, quantity: l.quantity })),
           }),
         });
         if (!res.ok) {
@@ -605,51 +653,6 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           </p>
         </div>
 
-        {lines.length > 0 && (
-          <div className="rounded-lg border border-slate-600/80 bg-slate-900/40 p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-slate-200">
-                Lista para registrar ({lines.length} {lines.length === 1 ? "línea" : "líneas"})
-              </h3>
-              <button
-                type="button"
-                onClick={() => setLines([])}
-                className="text-xs text-slate-400 hover:text-red-400"
-              >
-                Vaciar lista
-              </button>
-            </div>
-            <ul className="space-y-2">
-              {lines.map((line) => (
-                <li
-                  key={line.productId}
-                  className="flex flex-wrap items-center gap-2 text-sm bg-slate-800/60 rounded-lg px-3 py-2"
-                >
-                  <span className="text-slate-200 flex-1 min-w-[8rem]">{line.name}</span>
-                  <label className="flex items-center gap-1.5 text-slate-400">
-                    <span className="text-xs">Cant.</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={line.quantity}
-                      onChange={(e) => setLineQuantity(line.productId, e.target.value)}
-                      className="w-20 px-2 py-1 rounded bg-slate-900 border border-slate-600 text-white text-sm"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => removeLine(line.productId)}
-                    className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-slate-700"
-                    title="Quitar"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
         {(type === "salida" || type === "entrada") && (
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">
@@ -686,6 +689,95 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           </div>
         )}
 
+        {(type === "entrada" || type === "salida") && (
+          <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-4 space-y-3">
+            <label className="block text-sm font-medium text-slate-300">
+              Traer todos los productos de una categoría
+            </label>
+            <p className="text-xs text-slate-500">
+              Entran a la lista en cantidad 0. Después cargá las unidades de cada uno. Los que sigan en 0 no se registran.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="flex-1 min-w-[12rem] px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Elegí una categoría</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={loadCategoryProducts}
+                disabled={!categoryId || !warehouseId || (type === "salida" && !technicianId)}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium"
+              >
+                Traer productos
+              </button>
+            </div>
+            {categories.length === 0 && (
+              <p className="text-xs text-amber-400">No hay categorías. Creálas en la pestaña Categorías.</p>
+            )}
+          </div>
+        )}
+
+        {lines.length > 0 && (
+          <div className="rounded-lg border border-slate-600/80 bg-slate-900/40 p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-slate-200">
+                Lista ({linesToRegister.length} con cantidad
+                {lines.length > linesToRegister.length
+                  ? ` · ${lines.length - linesToRegister.length} en 0`
+                  : ""}
+                )
+              </h3>
+              <button
+                type="button"
+                onClick={() => setLines([])}
+                className="text-xs text-slate-400 hover:text-red-400"
+              >
+                Vaciar lista
+              </button>
+            </div>
+            <ul className="space-y-2">
+              {lines.map((line) => (
+                <li
+                  key={line.productId}
+                  className="flex flex-wrap items-center gap-2 text-sm bg-slate-800/60 rounded-lg px-3 py-2"
+                >
+                  <span className="text-slate-200 flex-1 min-w-[8rem]">{line.name}</span>
+                  <label className="flex items-center gap-1.5 text-slate-400">
+                    <span className="text-xs">Cant.</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={line.quantity}
+                      onChange={(e) => setLineQuantity(line.productId, e.target.value)}
+                      className={`w-20 px-2 py-1 rounded bg-slate-900 border text-sm ${
+                        line.quantity === 0
+                          ? "border-amber-500/70 text-amber-200"
+                          : "border-slate-600 text-white"
+                      }`}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => removeLine(line.productId)}
+                    className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-slate-700"
+                    title="Quitar"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">Motivo (opcional)</label>
           <input
@@ -709,7 +801,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
             (type === "salida" && !technicianId) ||
             !movementDate ||
             (lines.length > 0
-              ? false
+              ? linesToRegister.length === 0
               : !selectedProduct || !quantity || parseInt(quantity, 10) < 1)
           }
           className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-medium transition-colors"
@@ -718,7 +810,9 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
           {loading
             ? "Registrando..."
             : lines.length > 0
-              ? `Registrar ${lines.length} movimiento${lines.length === 1 ? "" : "s"}`
+              ? linesToRegister.length > 0
+                ? `Registrar ${linesToRegister.length} movimiento${linesToRegister.length === 1 ? "" : "s"}`
+                : "Cargá las cantidades"
               : "Registrar movimiento"}
         </button>
       </form>
