@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
 const productInclude = {
@@ -56,7 +57,12 @@ export async function PUT(
     }
 
     const data: Record<string, unknown> = {};
-    if (name?.trim() !== undefined) data.name = name.trim();
+    if (typeof name === "string") {
+      if (!name.trim()) {
+        return NextResponse.json({ error: "El nombre es requerido" }, { status: 400 });
+      }
+      data.name = name.trim();
+    }
     if (sku !== undefined) data.sku = sku?.trim() || null;
     if (barcode !== undefined) data.barcode = barcode?.trim() || null;
     if (description !== undefined) data.description = description?.trim() || null;
@@ -82,6 +88,9 @@ export async function PUT(
 
     return NextResponse.json(product);
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json({ error: "Ese SKU ya está usado por otro producto" }, { status: 400 });
+    }
     console.error("Error updating product:", error);
     return NextResponse.json({ error: "Error al actualizar producto" }, { status: 500 });
   }

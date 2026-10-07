@@ -22,9 +22,20 @@ interface ProductWithStock {
   name: string;
   sku: string | null;
   barcode: string | null;
+  description: string | null;
   lowStockThreshold: number | null;
   categories: { id: string; name: string }[];
   stock: { quantity: number; warehouse: { name: string } }[];
+}
+
+interface EditForm {
+  id: string;
+  name: string;
+  sku: string;
+  barcode: string;
+  description: string;
+  lowStockThreshold: string;
+  categoryIds: string[];
 }
 
 interface CategoryOption {
@@ -47,6 +58,9 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
   const [quickLoading, setQuickLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditForm | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
 
   const canDeleteProducts = Boolean(isAdmin && actingUserId);
 
@@ -147,6 +161,55 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
     }
   };
 
+  const openEdit = (product: ProductWithStock) => {
+    setQuickAddFor(null);
+    setEditError(null);
+    setEditForm({
+      id: product.id,
+      name: product.name,
+      sku: product.sku ?? "",
+      barcode: product.barcode ?? "",
+      description: product.description ?? "",
+      lowStockThreshold: product.lowStockThreshold?.toString() ?? "",
+      categoryIds: (product.categories ?? []).map((category) => category.id),
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editForm) return;
+    if (!editForm.name.trim()) {
+      setEditError("El nombre es requerido");
+      return;
+    }
+    setEditError(null);
+    setEditLoading(true);
+    try {
+      const res = await fetch(`/api/products/${editForm.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editForm.name,
+          sku: editForm.sku,
+          barcode: editForm.barcode,
+          description: editForm.description,
+          lowStockThreshold: editForm.lowStockThreshold,
+          categoryIds: editForm.categoryIds,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((data as { error?: string }).error || "No se pudo guardar");
+      }
+      setEditForm(null);
+      fetchProducts();
+      onInventoryChanged?.();
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Error al guardar");
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const saveCategories = async (productId: string, categoryIds: string[]) => {
     try {
       const res = await fetch(`/api/products/${productId}`, {
@@ -227,6 +290,130 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
         <div className="mb-3 p-3 rounded-lg bg-red-500/15 text-red-400 text-sm">{deleteError}</div>
       )}
 
+      {editForm && (
+        <form
+          className="mb-4 rounded-lg border border-slate-600 bg-slate-900/50 p-4 space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveEdit();
+          }}
+        >
+          <p className="text-sm text-slate-200">
+            <span className="text-emerald-400 font-medium">Editar producto</span>
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Nombre</label>
+            <input
+              value={editForm.name}
+              onChange={(e) => setEditForm((f) => (f ? { ...f, name: e.target.value } : f))}
+              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm"
+              required
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">SKU</label>
+              <input
+                value={editForm.sku}
+                onChange={(e) => setEditForm((f) => (f ? { ...f, sku: e.target.value } : f))}
+                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">Código de barras</label>
+              <input
+                value={editForm.barcode}
+                onChange={(e) => setEditForm((f) => (f ? { ...f, barcode: e.target.value } : f))}
+                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Descripción</label>
+            <textarea
+              value={editForm.description}
+              onChange={(e) => setEditForm((f) => (f ? { ...f, description: e.target.value } : f))}
+              rows={2}
+              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm resize-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Avisar stock bajo</label>
+            <input
+              type="number"
+              min={0}
+              value={editForm.lowStockThreshold}
+              onChange={(e) => setEditForm((f) => (f ? { ...f, lowStockThreshold: e.target.value } : f))}
+              placeholder="Vacío = no avisar"
+              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Categorías</label>
+            <div className="flex flex-wrap gap-1 mb-2">
+              {editForm.categoryIds.map((id) => {
+                const category = categories.find((item) => item.id === id);
+                if (!category) return null;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() =>
+                      setEditForm((f) =>
+                        f ? { ...f, categoryIds: f.categoryIds.filter((item) => item !== id) } : f
+                      )
+                    }
+                    className="px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-300 text-xs"
+                  >
+                    {category.name} ×
+                  </button>
+                );
+              })}
+            </div>
+            <select
+              value=""
+              onChange={(e) => {
+                const id = e.target.value;
+                if (!id) return;
+                setEditForm((f) =>
+                  f && !f.categoryIds.includes(id) ? { ...f, categoryIds: [...f.categoryIds, id] } : f
+                );
+              }}
+              className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm"
+            >
+              <option value="">Agregar categoría…</option>
+              {categories
+                .filter((category) => !editForm.categoryIds.includes(category.id))
+                .map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          {editError && <p className="text-sm text-red-400">{editError}</p>}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              disabled={editLoading}
+              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium"
+            >
+              {editLoading ? "Guardando…" : "Guardar cambios"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditForm(null);
+                setEditError(null);
+              }}
+              className="px-3 py-2 text-sm text-slate-400 hover:text-white"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
+
       {quickAddFor && (
         <div className="mb-4 rounded-lg border border-emerald-700/50 bg-emerald-950/30 p-4 space-y-3">
           <p className="text-sm text-slate-200">
@@ -299,7 +486,7 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
               <th className="text-left py-3 px-2 text-slate-400 font-medium">SKU / Código</th>
               <th className="text-left py-3 px-2 text-slate-400 font-medium">Stock por depósito</th>
               <th className="text-right py-3 px-2 text-slate-400 font-medium">Total</th>
-              <th className="text-center py-3 px-2 text-slate-400 font-medium">Sumar unidades</th>
+              <th className="text-center py-3 px-2 text-slate-400 font-medium">Acciones</th>
               {canDeleteProducts && (
                 <th className="text-center py-3 px-2 text-slate-400 font-medium w-14">Eliminar</th>
               )}
@@ -375,19 +562,32 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
                   </td>
                   <td className="py-3 px-2 text-right font-semibold text-emerald-400">{total}</td>
                   <td className="py-3 px-2 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQuickAddFor({ id: p.id, name: p.name });
-                        setQuickError(null);
-                        setQuickQty("1");
-                      }}
-                      className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/35 border border-emerald-700/40"
-                      title="Registrar entrada de stock para este producto"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      Sumar
-                    </button>
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(p)}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium bg-slate-700 text-slate-200 hover:bg-slate-600 border border-slate-600"
+                        title="Editar nombre, SKU, código y categorías"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditForm(null);
+                          setEditError(null);
+                          setQuickAddFor({ id: p.id, name: p.name });
+                          setQuickError(null);
+                          setQuickQty("1");
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/35 border border-emerald-700/40"
+                        title="Registrar entrada de stock para este producto"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Sumar
+                      </button>
+                    </div>
                   </td>
                   {canDeleteProducts && (
                     <td className="py-3 px-2 text-center">
