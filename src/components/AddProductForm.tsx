@@ -30,7 +30,7 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
     lowStockThreshold: "",
     initialWarehouseId: "",
     initialQuantity: "",
-    categoryId: "",
+    categoryIds: [] as string[],
   });
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -97,7 +97,7 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
         lowStockThreshold: form.lowStockThreshold,
         initialWarehouseId: form.initialWarehouseId.trim() || undefined,
         initialQuantity: form.initialQuantity.trim() || undefined,
-        categoryId: form.categoryId || null,
+        categoryIds: form.categoryIds,
       };
 
       const res = await fetch("/api/products", {
@@ -122,7 +122,7 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
         lowStockThreshold: "",
         initialWarehouseId: warehouses.length === 1 ? warehouses[0].id : "",
         initialQuantity: "",
-        categoryId: "",
+        categoryIds: [] as string[],
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
@@ -194,22 +194,49 @@ export function AddProductForm({ onProductAdded, onProductFound }: AddProductFor
           </div>
         </div>
         <div>
-          <label className="block text-sm font-medium text-slate-300 mb-1">Categoría</label>
+          <label className="block text-sm font-medium text-slate-300 mb-1">Categorías</label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {form.categoryIds.map((id) => {
+              const category = categories.find((item) => item.id === id);
+              if (!category) return null;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() =>
+                    setForm((f) => ({ ...f, categoryIds: f.categoryIds.filter((item) => item !== id) }))
+                  }
+                  className="px-2 py-1 rounded-full bg-emerald-600/20 text-emerald-300 text-xs"
+                  title="Quitar categoría"
+                >
+                  {category.name} ×
+                </button>
+              );
+            })}
+          </div>
           <select
-            value={form.categoryId}
-            onChange={(e) => setForm((f) => ({ ...f, categoryId: e.target.value }))}
+            value=""
+            onChange={(e) => {
+              const id = e.target.value;
+              if (!id) return;
+              setForm((f) =>
+                f.categoryIds.includes(id) ? f : { ...f, categoryIds: [...f.categoryIds, id] }
+              );
+            }}
             className="w-full px-4 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white focus:ring-2 focus:ring-emerald-500"
           >
-            <option value="">Sin categoría</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
+            <option value="">Agregar categoría…</option>
+            {categories
+              .filter((category) => !form.categoryIds.includes(category.id))
+              .map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
           </select>
-          {categories.length === 0 && (
-            <p className="text-xs text-slate-500 mt-1">Podés crear categorías en la pestaña Categorías.</p>
-          )}
+          <p className="text-xs text-slate-500 mt-1">
+            Podés agregar todas las que quieras. Tocá una etiqueta para quitarla.
+          </p>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-300 mb-1">Descripción</label>

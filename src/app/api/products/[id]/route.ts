@@ -3,8 +3,21 @@ import { prisma } from "@/lib/db";
 
 const productInclude = {
   stock: { include: { warehouse: true } },
-  category: { select: { id: true, name: true } },
+  categories: { select: { id: true, name: true }, orderBy: { name: "asc" as const } },
 };
+
+async function resolveCategoryIds(categoryIds: unknown) {
+  if (!Array.isArray(categoryIds)) {
+    return { ok: false as const, error: "Las categorías tienen que ser una lista" };
+  }
+  const ids = [...new Set(categoryIds.filter((id): id is string => typeof id === "string" && id.trim() !== ""))];
+  if (ids.length === 0) return { ok: true as const, ids: [] as string[] };
+  const found = await prisma.category.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  if (found.length !== ids.length) {
+    return { ok: false as const, error: "Hay categorías que no existen" };
+  }
+  return { ok: true as const, ids };
+}
 
 export async function GET(
   _request: NextRequest,
@@ -35,7 +48,7 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, sku, barcode, description, lowStockThreshold, categoryId } = body;
+    const { name, sku, barcode, description, lowStockThreshold, categoryIds } = body;
 
     const existing = await prisma.product.findUnique({ where: { id } });
     if (!existing) {
@@ -53,18 +66,12 @@ export async function PUT(
         : Math.max(0, parseInt(String(lowStockThreshold), 10));
       data.lowStockThreshold = val !== null && !isNaN(val) ? val : null;
     }
-    if (categoryId !== undefined) {
-      if (categoryId === null || categoryId === "") {
-        data.categoryId = null;
-      } else if (typeof categoryId !== "string") {
-        return NextResponse.json({ error: "Categoría inválida" }, { status: 400 });
-      } else {
-        const category = await prisma.category.findUnique({ where: { id: categoryId } });
-        if (!category) {
-          return NextResponse.json({ error: "Categoría no encontrada" }, { status: 400 });
-        }
-        data.categoryId = category.id;
+    if (categoryIds !== undefined) {
+      const categories = await resolveCategoryIds(categoryIds);
+      if (!categories.ok) {
+        return NextResponse.json({ error: categories.error }, { status: 400 });
       }
+      data.categories = { set: categories.ids.map((categoryId) => ({ id: categoryId })) };
     }
 
     const product = await prisma.product.update({

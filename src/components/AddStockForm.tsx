@@ -10,7 +10,7 @@ interface Product {
   name: string;
   sku: string | null;
   barcode: string | null;
-  category?: { id: string; name: string } | null;
+  categories?: { id: string; name: string }[];
 }
 
 interface Warehouse {
@@ -134,7 +134,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
         const name = p.name.toLowerCase();
         const sku = (p.sku ?? "").toLowerCase();
         const barcode = p.barcode ?? "";
-        const category = (p.category?.name ?? "").toLowerCase();
+        const category = (p.categories ?? []).map((item) => item.name).join(" ").toLowerCase();
         return name.includes(q) || sku.includes(q) || barcode.includes(q) || category.includes(q);
       })
       .slice(0, 15);
@@ -256,7 +256,7 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
       return;
     }
     const fromCategory = products
-      .filter((p) => p.category?.id === categoryId)
+      .filter((p) => (p.categories ?? []).some((category) => category.id === categoryId))
       .sort((a, b) => a.name.localeCompare(b.name, "es"));
     if (fromCategory.length === 0) {
       setError("Esa categoría no tiene productos");
@@ -507,8 +507,10 @@ export function AddStockForm({ onStockUpdated }: AddStockFormProps) {
                           } ${selectedProduct?.id === p.id ? "border-l-2 border-emerald-500" : ""}`}
                         >
                           <span className="font-medium">{p.name}</span>
-                          {p.category?.name && (
-                            <span className="ml-2 text-xs text-emerald-400">{p.category.name}</span>
+                          {(p.categories ?? []).length > 0 && (
+                            <span className="ml-2 text-xs text-emerald-400">
+                              {(p.categories ?? []).map((category) => category.name).join(", ")}
+                            </span>
                           )}
                           {(p.sku || p.barcode) && (
                             <span className="block text-xs text-slate-400 mt-0.5">

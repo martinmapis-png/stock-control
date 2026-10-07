@@ -23,7 +23,7 @@ interface ProductWithStock {
   sku: string | null;
   barcode: string | null;
   lowStockThreshold: number | null;
-  category: { id: string; name: string } | null;
+  categories: { id: string; name: string }[];
   stock: { quantity: number; warehouse: { name: string } }[];
 }
 
@@ -147,12 +147,12 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
     }
   };
 
-  const handleCategoryChange = async (productId: string, categoryId: string) => {
+  const saveCategories = async (productId: string, categoryIds: string[]) => {
     try {
       const res = await fetch(`/api/products/${productId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId: categoryId || null }),
+        body: JSON.stringify({ categoryIds }),
       });
       if (res.ok) fetchProducts();
     } catch {
@@ -161,9 +161,10 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
   };
 
   const visibleProducts = products.filter((product) => {
+    const assigned = product.categories ?? [];
     if (!categoryFilter) return true;
-    if (categoryFilter === "none") return !product.category;
-    return product.category?.id === categoryFilter;
+    if (categoryFilter === "none") return assigned.length === 0;
+    return assigned.some((category) => category.id === categoryFilter);
   });
 
   const handleSaveThreshold = async (productId: string) => {
@@ -294,7 +295,7 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
           <thead>
             <tr className="border-b border-slate-600">
               <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
-              <th className="text-left py-3 px-2 text-slate-400 font-medium">Categoría</th>
+              <th className="text-left py-3 px-2 text-slate-400 font-medium">Categorías</th>
               <th className="text-left py-3 px-2 text-slate-400 font-medium">SKU / Código</th>
               <th className="text-left py-3 px-2 text-slate-400 font-medium">Stock por depósito</th>
               <th className="text-right py-3 px-2 text-slate-400 font-medium">Total</th>
@@ -313,18 +314,44 @@ export function StockTable({ onInventoryChanged, isAdmin, actingUserId }: StockT
                 <tr key={p.id} className="border-b border-slate-700/50 hover:bg-slate-800/30">
                   <td className="py-3 px-2 text-white font-medium">{p.name}</td>
                   <td className="py-3 px-2">
-                    <select
-                      value={p.category?.id ?? ""}
-                      onChange={(e) => handleCategoryChange(p.id, e.target.value)}
-                      className="max-w-[11rem] px-2 py-1 rounded bg-slate-900 border border-slate-600 text-slate-200 text-xs"
-                    >
-                      <option value="">Sin categoría</option>
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
+                    <div className="flex flex-wrap items-center gap-1 max-w-[16rem]">
+                      {(p.categories ?? []).map((category) => (
+                        <button
+                          key={category.id}
+                          type="button"
+                          onClick={() =>
+                            saveCategories(
+                              p.id,
+                              (p.categories ?? []).map((item) => item.id).filter((id) => id !== category.id)
+                            )
+                          }
+                          className="px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-300 text-xs"
+                          title="Quitar de esta categoría"
+                        >
+                          {category.name} ×
+                        </button>
                       ))}
-                    </select>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (!id) return;
+                          const current = (p.categories ?? []).map((category) => category.id);
+                          if (current.includes(id)) return;
+                          saveCategories(p.id, [...current, id]);
+                        }}
+                        className="max-w-[9rem] px-2 py-1 rounded bg-slate-900 border border-slate-600 text-slate-200 text-xs"
+                      >
+                        <option value="">Agregar…</option>
+                        {categories
+                          .filter((category) => !(p.categories ?? []).some((item) => item.id === category.id))
+                          .map((category) => (
+                            <option key={category.id} value={category.id}>
+                              {category.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
                   </td>
                   <td className="py-3 px-2 text-slate-400">
                     {[p.sku, p.barcode].filter(Boolean).join(" / ") || "-"}

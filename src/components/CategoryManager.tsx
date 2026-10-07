@@ -19,7 +19,7 @@ interface ProductOption {
   id: string;
   name: string;
   sku: string | null;
-  category: { id: string; name: string } | null;
+  categories: { id: string; name: string }[];
 }
 
 export function CategoryManager() {
@@ -43,7 +43,14 @@ export function CategoryManager() {
     const categoriesData = await categoriesRes.json();
     const productsData = await productsRes.json();
     setCategories(Array.isArray(categoriesData) ? categoriesData : []);
-    setProducts(Array.isArray(productsData) ? productsData : []);
+    setProducts(
+      Array.isArray(productsData)
+        ? productsData.map((product: ProductOption) => ({
+            ...product,
+            categories: Array.isArray(product.categories) ? product.categories : [],
+          }))
+        : []
+    );
   };
 
   useEffect(() => {
@@ -51,8 +58,8 @@ export function CategoryManager() {
   }, []);
 
   const selected = selectedId && selectedId !== "none" ? categories.find((c) => c.id === selectedId) ?? null : null;
-  const uncategorized = products.filter((p) => !p.category);
-  const availableToAdd = products.filter((p) => p.category?.id !== selected?.id);
+  const uncategorized = products.filter((p) => p.categories.length === 0);
+  const availableToAdd = products.filter((p) => !p.categories.some((c) => c.id === selected?.id));
 
   const createCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +109,7 @@ export function CategoryManager() {
   const deleteCategory = async () => {
     if (!selected) return;
     const ok = window.confirm(
-      `¿Eliminar la categoría «${selected.name}»?\n\nLos productos quedan sin categoría. No se borra el stock.`
+      `¿Eliminar la categoría «${selected.name}»?\n\nLos productos se quitan solo de esta categoría. Si están en otras, siguen ahí. No se borra el stock.`
     );
     if (!ok) return;
     setError(null);
@@ -120,17 +127,17 @@ export function CategoryManager() {
     }
   };
 
-  const assignProduct = async (productId: string, categoryId: string | null) => {
+  const setProductCategories = async (productId: string, categoryIds: string[]) => {
     setError(null);
     setLoading(true);
     try {
       const res = await fetch(`/api/products/${productId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categoryId }),
+        body: JSON.stringify({ categoryIds }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "No se pudo mover el producto");
+      if (!res.ok) throw new Error(data.error || "No se pudo actualizar el producto");
       setProductToAdd("");
       setMoveCategoryId("");
       await load();
@@ -139,6 +146,19 @@ export function CategoryManager() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const addProductToCategory = (productId: string, categoryId: string) => {
+    const product = products.find((item) => item.id === productId);
+    const ids = new Set((product?.categories ?? []).map((category) => category.id));
+    ids.add(categoryId);
+    setProductCategories(productId, [...ids]);
+  };
+
+  const removeProductFromCategory = (productId: string, categoryId: string) => {
+    const product = products.find((item) => item.id === productId);
+    const ids = (product?.categories ?? []).map((category) => category.id).filter((id) => id !== categoryId);
+    setProductCategories(productId, ids);
   };
 
   return (
@@ -161,7 +181,7 @@ export function CategoryManager() {
         </button>
       </div>
       <p className="text-sm text-slate-400 mb-4">
-        Creá categorías y meté productos adentro. Un producto puede estar en una sola categoría.
+        Creá categorías y meté productos adentro. Un producto puede estar en todas las categorías que quieras.
       </p>
 
       {showForm && (
@@ -239,14 +259,14 @@ export function CategoryManager() {
             <>
               <h3 className="text-lg font-medium text-white mb-3">Productos sin categoría</h3>
               {uncategorized.length === 0 ? (
-                <p className="text-slate-400 text-sm">Todos los productos están en una categoría.</p>
+                <p className="text-slate-400 text-sm">Todos los productos están en al menos una categoría.</p>
               ) : (
                 <>
                   <form
                     className="flex flex-wrap gap-2 mb-4"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      if (productToAdd && moveCategoryId) assignProduct(productToAdd, moveCategoryId);
+                      if (productToAdd && moveCategoryId) addProductToCategory(productToAdd, moveCategoryId);
                     }}
                   >
                     <select
@@ -278,7 +298,7 @@ export function CategoryManager() {
                       disabled={loading || !productToAdd || !moveCategoryId}
                       className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium"
                     >
-                      Mover
+                      Agregar
                     </button>
                   </form>
                   <ul className="space-y-1">
@@ -353,7 +373,7 @@ export function CategoryManager() {
                 className="flex flex-wrap gap-2 mb-4"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (productToAdd) assignProduct(productToAdd, selected.id);
+                  if (productToAdd) addProductToCategory(productToAdd, selected.id);
                 }}
               >
                 <select
@@ -365,7 +385,9 @@ export function CategoryManager() {
                   {availableToAdd.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.name}
-                      {product.category ? ` (en ${product.category.name})` : ""}
+                      {product.categories.length > 0
+                        ? ` (también en ${product.categories.map((category) => category.name).join(", ")})`
+                        : ""}
                     </option>
                   ))}
                 </select>
@@ -394,7 +416,7 @@ export function CategoryManager() {
                       <button
                         type="button"
                         disabled={loading}
-                        onClick={() => assignProduct(product.id, null)}
+                        onClick={() => removeProductFromCategory(product.id, selected.id)}
                         className="text-sm text-slate-400 hover:text-white"
                       >
                         Quitar

@@ -3,18 +3,21 @@ import { prisma } from "@/lib/db";
 
 const productInclude = {
   stock: { include: { warehouse: true } },
-  category: { select: { id: true, name: true } },
+  categories: { select: { id: true, name: true }, orderBy: { name: "asc" as const } },
 };
 
-async function resolveCategoryId(categoryId: unknown) {
-  if (categoryId === undefined) return { ok: true as const, value: undefined };
-  if (categoryId === null || categoryId === "") return { ok: true as const, value: null };
-  if (typeof categoryId !== "string") {
-    return { ok: false as const, error: "Categoría inválida" };
+async function resolveCategoryIds(categoryIds: unknown) {
+  if (categoryIds === undefined) return { ok: true as const, ids: undefined };
+  if (!Array.isArray(categoryIds)) {
+    return { ok: false as const, error: "Las categorías tienen que ser una lista" };
   }
-  const category = await prisma.category.findUnique({ where: { id: categoryId } });
-  if (!category) return { ok: false as const, error: "Categoría no encontrada" };
-  return { ok: true as const, value: category.id };
+  const ids = [...new Set(categoryIds.filter((id): id is string => typeof id === "string" && id.trim() !== ""))];
+  if (ids.length === 0) return { ok: true as const, ids: [] as string[] };
+  const found = await prisma.category.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  if (found.length !== ids.length) {
+    return { ok: false as const, error: "Hay categorías que no existen" };
+  }
+  return { ok: true as const, ids };
 }
 
 export async function GET(request: NextRequest) {
@@ -47,7 +50,7 @@ export async function GET(request: NextRequest) {
               { name: { contains: search } },
               { sku: { contains: search } },
               { barcode: { contains: search } },
-              { category: { name: { contains: search } } },
+              { categories: { some: { name: { contains: search } } } },
             ],
           }
         : undefined,
@@ -65,7 +68,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, sku, barcode, description, lowStockThreshold, initialWarehouseId, initialQuantity, categoryId } = body;
+    const { name, sku, barcode, description, lowStockThreshold, initialWarehouseId, initialQuantity, categoryIds } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: "El nombre es requerido" }, { status: 400 });
@@ -100,9 +103,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const category = await resolveCategoryId(categoryId);
-    if (!category.ok) {
-      return NextResponse.json({ error: category.error }, { status: 400 });
+    const categories = await resolveCategoryIds(categoryIds);
+    if (!categories.ok) {
+      return NextResponse.json({ error: categories.error }, { status: 400 });
     }
 
     const product = await prisma.$transaction(async (tx) => {
@@ -113,7 +116,9 @@ export async function POST(request: NextRequest) {
           barcode: barcode?.trim() || null,
           description: description?.trim() || null,
           lowStockThreshold: threshold,
-          categoryId: category.value ?? null,
+          ...(categories.ids && categories.ids.length > 0
+            ? { categories: { connect: categories.ids.map((id) => ({ id })) } }
+            : {}),
         },
       });
 

@@ -9,7 +9,7 @@ interface ProductTotal {
   name: string;
   sku: string | null;
   barcode: string | null;
-  categoryName: string | null;
+  categoryNames: string;
   total: number;
   lowStockThreshold: number | null;
 }
@@ -99,7 +99,7 @@ export function Dashboard() {
               name: string;
               sku: string | null;
               barcode: string | null;
-              category?: { name: string } | null;
+              categories?: { name: string }[];
               lowStockThreshold?: number | null;
               stock?: { quantity: number; warehouse?: { name: string } }[];
             }) => {
@@ -110,15 +110,15 @@ export function Dashboard() {
                 name: p.name,
                 sku: p.sku,
                 barcode: p.barcode,
-                categoryName: p.category?.name ?? null,
+                categoryNames: (p.categories ?? []).map((category) => category.name).join(", "),
                 total,
                 lowStockThreshold: p.lowStockThreshold ?? null,
               };
             }
           )
           .sort((a, b) => {
-            const categoryA = a.categoryName ?? "\uffff";
-            const categoryB = b.categoryName ?? "\uffff";
+            const categoryA = a.categoryNames || "\uffff";
+            const categoryB = b.categoryNames || "\uffff";
             const byCategory = categoryA.localeCompare(categoryB, "es");
             if (byCategory !== 0) return byCategory;
             return a.name.localeCompare(b.name, "es");
@@ -244,7 +244,7 @@ export function Dashboard() {
               <thead>
                 <tr className="border-b border-slate-600 sticky top-0 bg-slate-800/95">
                   <th className="text-left py-3 px-2 text-slate-400 font-medium">Producto</th>
-                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Categoría</th>
+                  <th className="text-left py-3 px-2 text-slate-400 font-medium">Categorías</th>
                   <th className="text-left py-3 px-2 text-slate-400 font-medium">SKU / Código</th>
                   <th className="text-right py-3 px-2 text-slate-400 font-medium">Total</th>
                 </tr>
@@ -253,7 +253,7 @@ export function Dashboard() {
                 {data.productsWithTotal.map((p) => (
                   <tr key={p.id} className="border-b border-slate-700/50 hover:bg-slate-800/30">
                     <td className="py-3 px-2 text-white font-medium">{p.name}</td>
-                    <td className="py-3 px-2 text-slate-300">{p.categoryName || "Sin categoría"}</td>
+                    <td className="py-3 px-2 text-slate-300">{p.categoryNames || "Sin categoría"}</td>
                     <td className="py-3 px-2 text-slate-400">
                       {[p.sku, p.barcode].filter(Boolean).join(" / ") || "-"}
                     </td>
